@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { createSakuraTree, createJapaneseVendingMachine } from './japanProps';
 
 export const JapanCity = {
   modelUrl: '/assets/models/japan/LittlestTokyo.glb'
@@ -98,6 +99,27 @@ export function applyJapanIntegration(scene: any, onStatus?: (status: string) =>
       console.warn('Road segment model load skipped:', err);
     }
   );
+
+  // Add Japanese Sakura (cherry blossom) trees along the walkway
+  try {
+    const sakuraTrees = [
+      createSakuraTree(-8, -6, 1.05),
+      createSakuraTree(-8, 8, 0.95),
+      createSakuraTree(10, -7, 1.1),
+      createSakuraTree(10, 9, 1.0)
+    ];
+    for (const tree of sakuraTrees) {
+      scene.add(tree);
+    }
+
+    // Add Japanese roadside vending machines (自動販売機) with illumination
+    const machine1 = createJapaneseVendingMachine(-4.2, -2.5, Math.PI / 2);
+    const machine2 = createJapaneseVendingMachine(-4.2, -4.0, Math.PI / 2);
+    scene.add(machine1);
+    scene.add(machine2);
+  } catch (err) {
+    console.error('Error creating Japan environment props:', err);
+  }
 }
 
 export const useJapanIntegration = applyJapanIntegration;
