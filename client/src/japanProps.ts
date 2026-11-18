@@ -222,3 +222,98 @@ export function createJapaneseRoadSign(x: number, z: number, rotationY = 0): any
   signGroup.rotation.y = rotationY;
   return signGroup;
 }
+
+/**
+ * Creates an authentic Japanese roadside white steel guardrail (ガードレール).
+ */
+export function createJapaneseGuardRail(x: number, z: number, length = 8, rotationY = 0): any {
+  const railGroup = new THREE.Group();
+  railGroup.name = 'JapanGuardRail';
+
+  const whiteSteel = new THREE.MeshStandardMaterial({
+    color: '#f8fafc',
+    roughness: 0.35,
+    metalness: 0.55
+  });
+  const reflectorMat = new THREE.MeshStandardMaterial({
+    color: '#eab308',
+    emissive: '#eab308',
+    emissiveIntensity: 0.4,
+    roughness: 0.2
+  });
+
+  // Horizontal dual beam guardrails
+  const upperBeam = new THREE.Mesh(new THREE.BoxGeometry(length, 0.28, 0.06), whiteSteel);
+  upperBeam.position.set(length / 2, 0.72, 0);
+  upperBeam.castShadow = true;
+  upperBeam.receiveShadow = true;
+  railGroup.add(upperBeam);
+
+  const lowerBeam = new THREE.Mesh(new THREE.BoxGeometry(length, 0.22, 0.05), whiteSteel);
+  lowerBeam.position.set(length / 2, 0.36, 0);
+  lowerBeam.castShadow = true;
+  lowerBeam.receiveShadow = true;
+  railGroup.add(lowerBeam);
+
+  // Vertical steel support posts every 2 meters
+  const postCount = Math.floor(length / 2) + 1;
+  for (let i = 0; i < postCount; i++) {
+    const px = i * (length / (postCount - 1));
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.95, 12), whiteSteel);
+    post.position.set(px, 0.47, 0);
+    post.castShadow = true;
+    railGroup.add(post);
+
+    // Amber reflective cap on each post top
+    const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.065, 0.065, 0.06, 12), reflectorMat);
+    cap.position.set(px, 0.96, 0);
+    railGroup.add(cap);
+  }
+
+  railGroup.position.set(x, 0, z);
+  railGroup.rotation.y = rotationY;
+  return railGroup;
+}
+
+/**
+ * Creates an authentic Japanese road construction / pedestrian traffic cone (カラーコーン).
+ */
+export function createJapaneseTrafficCone(x: number, z: number): any {
+  const coneGroup = new THREE.Group();
+  coneGroup.name = 'JapanTrafficCone';
+
+  const coneMat = new THREE.MeshStandardMaterial({
+    color: '#ea580c',
+    roughness: 0.4,
+    metalness: 0.1
+  });
+  const reflectiveWhite = new THREE.MeshStandardMaterial({
+    color: '#f8fafc',
+    roughness: 0.2,
+    metalness: 0.15
+  });
+  const rubberBaseMat = new THREE.MeshStandardMaterial({
+    color: '#1e293b',
+    roughness: 0.85
+  });
+
+  // Square base weight
+  const base = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.04, 0.38), rubberBaseMat);
+  base.position.set(0, 0.02, 0);
+  base.castShadow = true;
+  coneGroup.add(base);
+
+  // Main orange cone
+  const cone = new THREE.Mesh(new THREE.ConeGeometry(0.16, 0.72, 16), coneMat);
+  cone.position.set(0, 0.38, 0);
+  cone.castShadow = true;
+  coneGroup.add(cone);
+
+  // White reflective band
+  const stripe = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.12, 0.16, 16), reflectiveWhite);
+  stripe.position.set(0, 0.38, 0);
+  coneGroup.add(stripe);
+
+  coneGroup.position.set(x, 0, z);
+  return coneGroup;
+}

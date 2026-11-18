@@ -4,7 +4,9 @@ import {
   createSakuraTree,
   createJapaneseVendingMachine,
   createJapaneseLantern,
-  createJapaneseRoadSign
+  createJapaneseRoadSign,
+  createJapaneseGuardRail,
+  createJapaneseTrafficCone
 } from './japanProps';
 
 export const JapanCity = {
@@ -105,7 +107,7 @@ export function applyJapanIntegration(scene: any, onStatus?: (status: string) =>
     }
   );
 
-  // Add Japanese environment props
+  // Add authentic Japanese street environment props
   try {
     // Sakura (cherry blossom) trees along the walkway
     const sakuraTrees = [
@@ -130,6 +132,14 @@ export function applyJapanIntegration(scene: any, onStatus?: (status: string) =>
 
     // Japanese street directional sign (案内標識)
     scene.add(createJapaneseRoadSign(7, 2, -Math.PI / 2));
+
+    // Japanese roadside white steel guardrails (ガードレール) with yellow reflectors
+    scene.add(createJapaneseGuardRail(-8.5, -4, 8, Math.PI / 2));
+    scene.add(createJapaneseGuardRail(8.5, -4, 8, Math.PI / 2));
+
+    // Japanese reflective road cones (カラーコーン)
+    scene.add(createJapaneseTrafficCone(-5.5, -0.5));
+    scene.add(createJapaneseTrafficCone(-5.5, 1.5));
   } catch (err) {
     console.error('Error creating Japan environment props:', err);
   }
