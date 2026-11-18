@@ -943,11 +943,22 @@ export default function CityScene({ active, paused, objectives, onMission, onHud
     ground.receiveShadow = true
     scene.add(ground)
 
-    // Japanese urban charcoal-asphalt road material with PBR normal & roughness maps
-    const roadMat = new THREE.MeshStandardMaterial({ color: '#353c40', map: asphaltMap, normalMap: asphaltNormal, normalScale: new THREE.Vector2(.48, .48), roughnessMap: asphaltRoughness, roughness: .86, metalness: .02 })
-    const curbMat = new THREE.MeshStandardMaterial({ color: '#889094', roughness: .88, metalness: .04 })
-    const sidewalkMat = new THREE.MeshStandardMaterial({ color: '#687074', roughness: .94, metalness: 0 })
-    const gutterMat = new THREE.MeshStandardMaterial({ color: '#242b2e', roughness: .98 })
+    // Japanese urban charcoal-asphalt road material with GTA-style specular sheen, micro-bump normals, and clearcoat
+    const roadMat = new THREE.MeshPhysicalMaterial({
+      color: '#2c3135',
+      map: asphaltMap,
+      normalMap: asphaltNormal,
+      normalScale: new THREE.Vector2(0.85, 0.85),
+      roughnessMap: asphaltRoughness,
+      roughness: 0.52,
+      metalness: 0.08,
+      clearcoat: 0.28,
+      clearcoatRoughness: 0.32,
+      reflectivity: 0.5,
+    })
+    const curbMat = new THREE.MeshStandardMaterial({ color: '#7a8286', roughness: .75, metalness: .08 })
+    const sidewalkMat = new THREE.MeshStandardMaterial({ color: '#5e6569', roughness: .82, metalness: .02 })
+    const gutterMat = new THREE.MeshStandardMaterial({ color: '#1c2225', roughness: .65, metalness: .12 })
     const roadEdgePoses: { x: number; z: number; rotation: number; normalX: number; normalZ: number }[] = []
     for (let k = -5; k <= 5; k++) {
       const p = k * 100
@@ -1015,7 +1026,14 @@ export default function CityScene({ active, paused, objectives, onMission, onHud
         crosswalkPoses.push({ x: x - 12.2, z: z + stripe * 2.35, rotation: Math.PI / 2 })
       }
     }
-    const crosswalks = new THREE.InstancedMesh(new THREE.BoxGeometry(1.35, .018, 3.45), new THREE.MeshStandardMaterial({ color: '#f1f5f9', roughness: .85 }), crosswalkPoses.length)
+    const crosswalkMat = new THREE.MeshPhysicalMaterial({
+      color: '#f8fafc',
+      roughness: 0.45,
+      metalness: 0.04,
+      clearcoat: 0.22,
+      clearcoatRoughness: 0.25,
+    })
+    const crosswalks = new THREE.InstancedMesh(new THREE.BoxGeometry(1.35, .018, 3.45), crosswalkMat, crosswalkPoses.length)
     const crosswalkTransform = new THREE.Object3D()
     crosswalkPoses.forEach((pose, index) => {
       crosswalkTransform.position.set(pose.x, .044, pose.z)
