@@ -118,3 +118,107 @@ export function createJapaneseVendingMachine(x: number, z: number, rotationY = 0
   machine.rotation.y = rotationY;
   return machine;
 }
+
+/**
+ * Creates a traditional Japanese stone lantern (石灯籠 - Ishidōrō).
+ */
+export function createJapaneseLantern(x: number, z: number): any {
+  const lantern = new THREE.Group();
+  lantern.name = 'JapanStoneLantern';
+
+  const stoneMat = new THREE.MeshStandardMaterial({
+    color: '#78716c',
+    roughness: 0.92,
+    metalness: 0.05
+  });
+
+  // Base (Kiso)
+  const base = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.3, 0.9), stoneMat);
+  base.position.set(0, 0.15, 0);
+  base.castShadow = true;
+  base.receiveShadow = true;
+  lantern.add(base);
+
+  // Pillar (Sao)
+  const pillar = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.26, 1.2, 8), stoneMat);
+  pillar.position.set(0, 0.9, 0);
+  pillar.castShadow = true;
+  lantern.add(pillar);
+
+  // Middle platform (Chūdai)
+  const chudai = new THREE.Mesh(new THREE.BoxGeometry(0.85, 0.18, 0.85), stoneMat);
+  chudai.position.set(0, 1.55, 0);
+  chudai.castShadow = true;
+  lantern.add(chudai);
+
+  // Light chamber (Hibukuro) with glowing rice-paper core
+  const paperMat = new THREE.MeshStandardMaterial({
+    color: '#ffedd5',
+    emissive: '#f59e0b',
+    emissiveIntensity: 0.8,
+    roughness: 0.4
+  });
+  const lightChamber = new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.55, 0.52), paperMat);
+  lightChamber.position.set(0, 1.9, 0);
+  lantern.add(lightChamber);
+
+  // Roof (Kasa) with flared hexagonal edges
+  const roof = new THREE.Mesh(new THREE.ConeGeometry(0.75, 0.4, 6), stoneMat);
+  roof.position.set(0, 2.35, 0);
+  roof.castShadow = true;
+  lantern.add(roof);
+
+  // Top finial (Hōju)
+  const jewel = new THREE.Mesh(new THREE.SphereGeometry(0.12, 8, 8), stoneMat);
+  jewel.position.set(0, 2.6, 0);
+  lantern.add(jewel);
+
+  // Warm amber point light
+  const warmLight = new THREE.PointLight('#f59e0b', 1.5, 7, 2);
+  warmLight.position.set(0, 1.9, 0);
+  lantern.add(warmLight);
+
+  lantern.position.set(x, 0, z);
+  return lantern;
+}
+
+/**
+ * Creates an authentic Japanese overhead street directional sign (案内標識).
+ */
+export function createJapaneseRoadSign(x: number, z: number, rotationY = 0): any {
+  const signGroup = new THREE.Group();
+  signGroup.name = 'JapanRoadSign';
+
+  const steelMat = new THREE.MeshStandardMaterial({
+    color: '#475569',
+    roughness: 0.45,
+    metalness: 0.8
+  });
+
+  // Vertical steel post
+  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 5.5, 12), steelMat);
+  pole.position.set(0, 2.75, 0);
+  pole.castShadow = true;
+  signGroup.add(pole);
+
+  // Horizontal cantilever arm
+  const arm = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 2.4, 8), steelMat);
+  arm.rotation.z = Math.PI / 2;
+  arm.position.set(1.2, 5.1, 0);
+  signGroup.add(arm);
+
+  // Sign plate: iconic Japanese highway/city blue with white frame
+  const signBoardMat = new THREE.MeshStandardMaterial({
+    color: '#1d4ed8',
+    roughness: 0.25,
+    metalness: 0.1
+  });
+  const board = new THREE.Mesh(new THREE.BoxGeometry(2.0, 1.1, 0.06), signBoardMat);
+  board.position.set(1.4, 4.6, 0);
+  board.castShadow = true;
+  signGroup.add(board);
+
+  signGroup.position.set(x, 0, z);
+  signGroup.rotation.y = rotationY;
+  return signGroup;
+}

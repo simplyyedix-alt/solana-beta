@@ -1,6 +1,11 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import { createSakuraTree, createJapaneseVendingMachine } from './japanProps';
+import {
+  createSakuraTree,
+  createJapaneseVendingMachine,
+  createJapaneseLantern,
+  createJapaneseRoadSign
+} from './japanProps';
 
 export const JapanCity = {
   modelUrl: '/assets/models/japan/LittlestTokyo.glb'
@@ -100,8 +105,9 @@ export function applyJapanIntegration(scene: any, onStatus?: (status: string) =>
     }
   );
 
-  // Add Japanese Sakura (cherry blossom) trees along the walkway
+  // Add Japanese environment props
   try {
+    // Sakura (cherry blossom) trees along the walkway
     const sakuraTrees = [
       createSakuraTree(-8, -6, 1.05),
       createSakuraTree(-8, 8, 0.95),
@@ -112,11 +118,18 @@ export function applyJapanIntegration(scene: any, onStatus?: (status: string) =>
       scene.add(tree);
     }
 
-    // Add Japanese roadside vending machines (自動販売機) with illumination
+    // Japanese roadside vending machines (自動販売機) with illumination
     const machine1 = createJapaneseVendingMachine(-4.2, -2.5, Math.PI / 2);
     const machine2 = createJapaneseVendingMachine(-4.2, -4.0, Math.PI / 2);
     scene.add(machine1);
     scene.add(machine2);
+
+    // Traditional Japanese stone lanterns (石灯籠)
+    scene.add(createJapaneseLantern(-2, 4));
+    scene.add(createJapaneseLantern(2, 4));
+
+    // Japanese street directional sign (案内標識)
+    scene.add(createJapaneseRoadSign(7, 2, -Math.PI / 2));
   } catch (err) {
     console.error('Error creating Japan environment props:', err);
   }
