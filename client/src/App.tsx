@@ -1,0 +1,3921 @@
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type TouchEvent as ReactTouchEvent } from "react";
+import { createPortal } from "react-dom";
+import {
+  onAuthStateChanged,
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  signInWithPopup,
+  signInWithCredential,
+  GoogleAuthProvider,
+  sendPasswordResetEmail,
+  sendEmailVerification,
+  signOut,
+  updateProfile,
+  type User,
+} from "firebase/auth";
+import { auth, firebaseReady, googleProvider } from "./firebase";
+import coChatLogo from "./assets/logo.svg";
+import { Timestamp } from "firebase/firestore";
+import { supabaseReady, verifyFirebaseIdentity } from "./supabase";
+import {
+  addGroupMembers,
+  blockUser,
+  cancelFriendRequest,
+  createCall,
+  createConversation,
+  isSupabaseChatEnabled,
+  createGroup,
+  createStory,
+  declineCall,
+  deleteConversation,
+  ensureUserProfile,
+  findUsers,
+  getFriendship,
+  getStudyLeaderboard,
+  getStudyStats,
+  getUserProfile,
+  listBlockedUsers,
+  listFriends,
+  leaveGroup,
+  markConversationRead,
+  removeFriend,
+  removeGroupMember,
+  respondToFriendRequest,
+  saveProfile,
+  saveStudySession,
+  saveTheme,
+  sendFriendRequest,
+  sendMessage,
+  sendSneak,
+  consumeSneak,
+  deleteMessageForMe,
+  unblockUser,
+  unsendMessage,
+  updateGroup,
+  touchPresence,
+  updateStudyPresence,
+  watchCalls,
+  watchConversations,
+  watchIncomingConversationEvents,
+  watchFriendRequests,
+  watchMessages,
+  watchStories,
+  type CallRecord,
+  type ChatAttachment,
+  type ChatMessage,
+  type Conversation,
+  type Story,
+  type StudyLeaderboardEntry,
+  type UserProfile,
+} from "./services/chat";
+import { attachTwittCommentMedia, createTwitt as createRemoteTwitt, createTwittComment, deleteTwitt, deleteTwittComment, hideTwitt, isModerator, isVerified, loadTwittComments, loadTwittPage, recordTwittView, restrictTwittUser, toggleTwittCommentLike, toggleTwittLike, type TwittAttachment, type TwittAuthorProfile, type TwittComment, type TwittRecord } from "./services/twitts";
+import { StorageManager } from "./services/storageManager";
+import { clearConversationNotifications, clearStudyTimerNotification, listenNotificationActions, notifyIncomingCall, notifyIncomingMessage, notifyStudyTimer, notifyStudyTimerComplete, registerFcmNotifications } from "./services/notifications";
+import "./index.css";
+import "./group-friend.css";
+import "./community-feed.css";
+import "./discovery-media.css";
+import VoiceCall from "./components/VoiceCall";
+import GroupVoiceCall from "./components/GroupVoiceCall";
+import Avatar, { DEFAULT_AVATAR_URL, usablePhotoURL } from "./components/Avatar";
+import { Capacitor } from "@capacitor/core";
+import { FirebaseAuthentication } from "@capacitor-firebase/authentication";
+import { Camera, CameraResultType, CameraSource } from "@capacitor/camera";
+import { CameraStudio, cameraDataUrlToFile, cameraFilterCss, cameraFilterOptions, type CameraFilter } from "./components/CameraStudio";
+
+const initials = (name: string) =>
+  name
+    .split(/\s+/)
+    .map((x) => x[0])
+    .join("")
+    .slice(0, 2)
+    .toUpperCase() || "U";
+
+const VerifiedTick = () => <span className="verified-tick" title="Verified account" aria-label="Verified account"><svg viewBox="0 0 24 24" aria-hidden="true"><path className="verified-tick-shape" d="M12 1.7l2.15 1.92 2.82-.54 1.34 2.53 2.7 1.02-.02 2.87 1.87 2.18-1.38 2.52.53 2.82-2.53 1.34-1.03 2.7-2.86-.02L12 22.3l-2.18-1.87-2.82.53-1.34-2.53-2.7-1.03.02-2.86-1.87-2.18 1.38-2.52-.53-2.82 2.53-1.34 1.03-2.7 2.86.02L12 1.7Z" /><path className="verified-tick-check" d="m7.15 12.15 3.1 3.08 6.6-6.58" /></svg></span>;
+const MediaIcon = () => <svg className="media-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m8.5 12.5 5.8-5.8a3.2 3.2 0 0 1 4.5 4.5l-7.5 7.5a5 5 0 0 1-7.1-7.1l7.1-7.1" /><path d="m9.2 15.1 6.4-6.4" /></svg>;
+const formatTime = (value?: { toDate?: () => Date } | null) =>
+  value?.toDate
+    ? value
+        .toDate()
+        .toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+    : "";
+const relativeMessageAge = (value?: { toMillis?: () => number } | null) => {
+  const elapsed = Math.max(0, Date.now() - (value?.toMillis?.() || Date.now()));
+  const minutes = Math.floor(elapsed / 60000);
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours} hr ago`;
+};
+const presenceLabel = (
+  active?: boolean,
+  lastSeen?: { toMillis?: () => number } | null,
+) => {
+  const timestamp = lastSeen?.toMillis?.() || 0;
+  if (active && timestamp > 0 && Date.now() - timestamp < 90000) return "Active now";
+  if (!timestamp) return "Offline";
+  const minutes = Math.max(1, Math.floor((Date.now() - timestamp) / 60000));
+  if (minutes < 60) return `${minutes} minute${minutes === 1 ? "" : "s"} ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days} day${days === 1 ? "" : "s"} ago`;
+  const weeks = Math.floor(days / 7);
+  return `${weeks} week${weeks === 1 ? "" : "s"} ago`;
+};
+const relativeMessageTime = (value?: { toMillis?: () => number } | null) => {
+  const timestamp = value?.toMillis?.() || 0;
+  if (!timestamp) return "just now";
+  const minutes = Math.floor((Date.now() - timestamp) / 60000);
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes} minute${minutes === 1 ? "" : "s"} ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days} day${days === 1 ? "" : "s"} ago`;
+  const weeks = Math.floor(days / 7);
+  return `${weeks} week${weeks === 1 ? "" : "s"} ago`;
+};
+
+function AuthScreen() {
+  const [mode, setMode] = useState<"signin" | "signup">("signin");
+  const isNativeAndroid = Capacitor.isNativePlatform() && Capacitor.getPlatform() === "android";
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [busy, setBusy] = useState(false);
+  const friendlyAuthError = (value: unknown, fallback: string) => {
+    const code = typeof value === "object" && value !== null && "code" in value ? String((value as { code?: string }).code) : "";
+    const messages: Record<string, string> = {
+      "auth/invalid-credential": "That email or password is incorrect.",
+      "auth/email-already-in-use": "An account already exists with this email.",
+      "auth/weak-password": "Choose a password with at least 6 characters.",
+      "auth/invalid-email": "Enter a valid email address.",
+      "auth/too-many-requests": "Too many attempts. Wait a minute before trying again.",
+      "auth/popup-closed-by-user": "The Google sign-in window was closed.",
+      "auth/network-request-failed": "Check your internet connection and try again.",
+    };
+    return messages[code] || (value instanceof Error ? value.message.replace("Firebase: ", "").replace(/ \(auth\/[\w-]+\)\.?$/, "") : fallback);
+  };
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!auth || busy) return;
+    setError("");
+    setNotice("");
+    setBusy(true);
+    const data = new FormData(event.currentTarget);
+    try {
+      if (mode === "signup") {
+        const result = await createUserWithEmailAndPassword(
+          auth,
+          String(data.get("email")),
+          String(data.get("password")),
+        );
+        await updateProfile(result.user, {
+          displayName: String(data.get("name")),
+        });
+        await sendEmailVerification(result.user);
+      } else
+        await signInWithEmailAndPassword(
+          auth,
+          String(data.get("email")),
+          String(data.get("password")),
+        );
+    } catch (e) {
+      setError(friendlyAuthError(e, "Unable to sign in."));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const google = async () => {
+    if (!auth || busy) return;
+    setError("");
+    setNotice("");
+    setBusy(true);
+    try {
+      const isAndroid = Capacitor.isNativePlatform() && Capacitor.getPlatform() === "android";
+      if (isAndroid) {
+        const result = await FirebaseAuthentication.signInWithGoogle();
+        const credential = result.credential;
+        if (!credential?.idToken) throw new Error("Google sign-in did not return an ID token.");
+        await signInWithCredential(auth, GoogleAuthProvider.credential(credential.idToken, credential.accessToken));
+      } else {
+        await signInWithPopup(auth, googleProvider);
+      }
+    } catch (e) {
+      setError(friendlyAuthError(e, "Google sign-in failed."));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const resetPassword = async () => {
+    if (!auth || busy) return;
+    const email = window.prompt("Enter the email for your Co-Chat account:")?.trim();
+    if (!email) return;
+    setError("");
+    setNotice("");
+    setBusy(true);
+    try {
+      await sendPasswordResetEmail(auth, email);
+      setNotice("Password reset instructions sent. Check your email.");
+    } catch (e) {
+      setError(friendlyAuthError(e, "Could not send password reset instructions."));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <main className={`auth auth-shell${isNativeAndroid ? " native-android" : ""}`}>
+      <section className="auth-showcase" aria-label="Co-Chat introduction">
+        <div className="auth-brand"><span className="brand-mark">C</span><span>Co-Chat</span></div>
+        <div className="auth-showcase-copy">
+          <span className="auth-kicker">A calmer place to connect</span>
+          <h1>Make space for the conversations that matter.</h1>
+          <p>Study together, share the small wins, and stay close to the people who keep you moving.</p>
+        </div>
+        <div className="auth-feature-grid">
+          <span><b>01</b><strong>Focus together</strong><small>Turn study time into momentum.</small></span>
+          <span><b>02</b><strong>Find your circle</strong><small>Meet people learning beside you.</small></span>
+          <span><b>03</b><strong>Keep it personal</strong><small>Your people, your pace, your next win.</small></span>
+        </div>
+        <div className="auth-orb auth-orb-one" /><div className="auth-orb auth-orb-two" />
+      </section>
+      <section className="auth-card auth-panel">
+        <div className="auth-panel-heading">
+          <span className="auth-panel-eyebrow">Welcome back</span>
+          <h2>{mode === "signin" ? "Sign in to Co-Chat" : "Create your Co-Chat account"}</h2>
+          <p>{mode === "signin" ? "Pick up exactly where you left off." : "It only takes a minute to get started."}</p>
+        </div>
+        {!firebaseReady ? (
+          <>
+            <div className="hero-card">
+              <h2>Sign-in unavailable</h2>
+              <p>
+                This build is missing the Firebase configuration required for
+                accounts. Rebuild the app with the project environment file;
+                your conversations and Twitts are not available offline.
+              </p>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="auth-tabs">
+              <button
+                type="button"
+                className={mode === "signin" ? "active" : ""}
+                onClick={() => setMode("signin")}
+                disabled={busy}
+              >
+                Sign in
+              </button>
+              <button
+                type="button"
+                className={mode === "signup" ? "active" : ""}
+                onClick={() => setMode("signup")}
+                disabled={busy}
+              >
+                Create account
+              </button>
+            </div>
+            <form className="auth-form" onSubmit={submit} aria-busy={busy}>
+              {mode === "signup" && (
+                <label className="auth-field">
+                  <span>Display name</span>
+                  <input name="name" autoComplete="name" required placeholder="Your name" disabled={busy} />
+                </label>
+              )}
+              <label className="auth-field">
+                <span>Email address</span>
+                <input
+                  name="email"
+                  type="email"
+                  autoComplete="email"
+                  required
+                  placeholder="you@example.com"
+                  disabled={busy}
+                />
+              </label>
+              <label className="auth-field">
+                <span>Password</span>
+                <input
+                  name="password"
+                  type="password"
+                  autoComplete={mode === "signin" ? "current-password" : "new-password"}
+                  minLength={6}
+                  required
+                  placeholder="At least 6 characters"
+                  disabled={busy}
+                />
+              </label>
+              {error && <p className="error-text">{error}</p>}
+              {notice && <p className="notice">{notice}</p>}
+              <button className="primary" disabled={busy}>
+                {busy ? "Connecting…" : mode === "signin" ? "Sign in" : "Create account"}
+              </button>
+            </form>
+            <button className="google-button" onClick={google} disabled={busy}>
+              {busy ? "Connecting…" : "Continue with Google"}
+            </button>
+            {mode === "signin" && (
+              <button className="secondary compact" type="button" onClick={() => void resetPassword()} disabled={busy}>
+                Forgot password?
+              </button>
+            )}
+            <div className="auth-helper"><span>⌁</span>Your account syncs securely across devices.</div>
+          </>
+        )}
+      </section>
+    </main>
+  );
+}
+function Nav({
+  page,
+  setPage,
+  isAndroid = false,
+}: {
+  page: string;
+  setPage: (value: string) => void;
+  isAndroid?: boolean;
+}) {
+  return (
+    <nav className={`bottom-nav${isAndroid ? " android-nav" : ""}`}>
+      {[
+        ["chats", "💬", "Chats"],
+        ["study", "◷", "Study"],
+        ["communities", "👥", "Communities"],
+        ["discover", "✦", "Discover"],
+        ["settings", "⚙", "Settings"],
+      ].map(([id, icon, label]) => (
+        <button
+          type="button"
+          key={id}
+          className={page === id ? "active" : ""}
+          aria-label={label}
+          title={isAndroid ? label : undefined}
+          onClick={() => setPage(id)}
+        >
+          <span>{icon}</span>
+          {!isAndroid && label}
+        </button>
+      ))}
+    </nav>
+  );
+}
+
+type StudyTask = { id: string; title: string; kind: "daily" | "personal"; action: "timer" | "discover"; startedAt?: number; completedAt?: number };
+const studyRecommendations = ["Solve five focused problems", "Revise one difficult chapter", "Study for 60 minutes", "Answer one student’s doubt", "Make short revision notes", "Complete a timed practice set"];
+const localStudyDateKey = (date = new Date()) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+const currentStudyWeekKey = () => { const date = new Date(); date.setHours(0, 0, 0, 0); date.setDate(date.getDate() - ((date.getDay() + 6) % 7)); return localStudyDateKey(date); };
+const studyTaskAction = (title: string): StudyTask["action"] => /answer.*doubt|help.*student/i.test(title) ? "discover" : "timer";
+const dailyStudyTasks = (dayNumber: number): StudyTask[] => {
+  let seed = Math.abs(dayNumber * 9301 + 49297) % 233280;
+  const choices = studyRecommendations.map((title, index) => ({ title, index }));
+  for (let index = choices.length - 1; index > 0; index -= 1) {
+    seed = (seed * 9301 + 49297) % 233280;
+    const swap = Math.floor((seed / 233280) * (index + 1));
+    [choices[index], choices[swap]] = [choices[swap], choices[index]];
+  }
+  return choices.slice(0, 2).map(({ title }, offset) => ({ id: `daily-${dayNumber}-${offset}`, title, kind: "daily" as const, action: studyTaskAction(title) }));
+};
+
+function StudyTaskSheet({ tasks, onClose, onStart, onComplete, onAdd, onRemove }: { tasks: StudyTask[]; onClose: () => void; onStart: (task: StudyTask) => void; onComplete: (id: string) => void; onAdd: (title: string) => void; onRemove: (id: string) => void }) {
+  const [draft, setDraft] = useState("");
+  const active = tasks.filter((task) => task.startedAt && !task.completedAt);
+  const recommended = tasks.filter((task) => task.kind === "daily");
+  const personal = tasks.filter((task) => task.kind === "personal");
+  const submit = (event: FormEvent) => { event.preventDefault(); const title = draft.trim(); if (!title) return; onAdd(title); setDraft(""); };
+  const taskRow = (task: StudyTask) => <article className={`task-row ${task.completedAt ? "completed" : task.startedAt ? "active" : ""}`} key={task.id}><span className="task-status">{task.completedAt ? "✓" : task.startedAt ? "◷" : "○"}</span><div><strong>{task.title}</strong><small>{task.completedAt ? "Completed today" : task.startedAt ? "In progress" : task.action === "discover" ? "Opens Discover to help someone" : task.kind === "daily" ? "Picked for you today" : "Your personal task"}</small></div>{task.completedAt ? <span className="task-finished">Done</span> : task.startedAt ? <button className="secondary compact" type="button" onClick={() => onComplete(task.id)}>Complete</button> : <button className="primary compact" type="button" onClick={() => onStart(task)}>{task.action === "discover" ? "Open" : "Start"}</button>}{task.kind === "personal" && !task.startedAt && !task.completedAt && <button className="task-remove" type="button" aria-label={`Remove ${task.title}`} onClick={() => onRemove(task.id)}>×</button>}</article>;
+  return <div className="task-sheet-backdrop" role="presentation" onMouseDown={onClose}><section className="task-sheet" role="dialog" aria-modal="true" aria-label="Study tasks" onMouseDown={(event) => event.stopPropagation()}><div className="sheet-handle"/><header className="task-sheet-header"><button className="icon" type="button" aria-label="Close tasks" onClick={onClose}>×</button><div><strong>Today’s tasks</strong><small>{active.length} in progress · {tasks.filter((task) => task.completedAt).length} complete</small></div><span>✦</span></header><div className="task-sheet-scroll"><section><p className="sheet-label">RECOMMENDED FOR YOU</p>{recommended.map(taskRow)}</section><section><div className="task-section-heading"><p className="sheet-label">MY TASKS</p><small>{personal.length}/5</small></div>{personal.map(taskRow)}{!personal.length && <p className="task-empty">Create optional tasks for anything you want to finish today.</p>}<form className="task-create" onSubmit={submit}><input value={draft} onChange={(event) => setDraft(event.target.value.slice(0, 80))} placeholder={personal.length >= 5 ? "Maximum 5 personal tasks" : "Create a personal task"} disabled={personal.length >= 5}/><button className="secondary compact" type="submit" disabled={!draft.trim() || personal.length >= 5}>Add</button></form></section></div></section></div>;
+}
+
+function TimerSetupSheet({ initialSeconds, onClose, onApply }: { initialSeconds: number; onClose: () => void; onApply: (seconds: number) => void }) {
+  const [hours, setHours] = useState(Math.floor(initialSeconds / 3600));
+  const [minutes, setMinutes] = useState(Math.floor((initialSeconds % 3600) / 60) || (initialSeconds ? 0 : 25));
+  const seconds = hours * 3600 + minutes * 60;
+  return <div className="task-sheet-backdrop" role="presentation" onMouseDown={onClose}><section className="timer-setup-sheet" role="dialog" aria-modal="true" aria-label="Set focus timer" onMouseDown={(event) => event.stopPropagation()}><div className="sheet-handle"/><header className="timer-setup-header"><button className="icon" type="button" aria-label="Close timer setup" onClick={onClose}>×</button><div><strong>Set focus timer</strong><small>Choose how long you want to study</small></div><span>◷</span></header><div className="timer-picker"><label><span>Hours</span><select value={hours} onChange={(event) => setHours(Number(event.target.value))}>{Array.from({ length: 9 }, (_, value) => <option value={value} key={value}>{value}</option>)}</select></label><b>:</b><label><span>Minutes</span><select value={minutes} onChange={(event) => setMinutes(Number(event.target.value))}>{[0, 5, 10, 15, 20, 25, 30, 45, 50, 55].map((value) => <option value={value} key={value}>{String(value).padStart(2, "0")}</option>)}</select></label></div><div className="timer-presets">{[[25, "25 min"], [50, "50 min"], [60, "1 hour"], [90, "1h 30m"]].map(([value, label]) => <button type="button" key={value} onClick={() => { setHours(Math.floor(Number(value) / 60)); setMinutes(Number(value) % 60); }}>{label}</button>)}</div><button className="primary timer-apply" type="button" disabled={!seconds} onClick={() => onApply(seconds)}>Use {hours ? `${hours}h ` : ""}{minutes ? `${minutes}m` : ""} timer</button></section></div>;
+}
+
+function studyMinutes(seconds: number) {
+  return `${Math.floor(seconds / 60)} min`;
+}
+
+function cameraErrorMessage(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error || "");
+  if (/device in use|notreadable|camera.*busy|already.*use/i.test(message)) return "Camera is already in use by another app or browser tab. Close it there and try again.";
+  if (/permission|denied|notallowed/i.test(message)) return "Camera permission is blocked. Allow camera access in your browser or Android settings, then try again.";
+  if (/cancel|dismiss/i.test(message)) return "";
+  return message || "Could not open the camera.";
+}
+
+function leaderboardHandle(entry: StudyLeaderboardEntry) {
+  const username = entry.username.trim().replace(/^@/, "");
+  // Prefer the saved username, but do not drop a real participant while a
+  // profile is still being repaired. A readable display-name slug is safer
+  // than exposing a generated UID.
+  if (username && !/^user_[a-z0-9]{6,}$/i.test(username) && username.toLowerCase() !== "user") return username;
+  const fallback = entry.displayName.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  return fallback || "member";
+}
+
+function LeaderboardPodiumCard({ entry, rank }: { entry?: StudyLeaderboardEntry; rank: 1 | 2 | 3 }) {
+  const medal = rank === 1 ? "🏆" : rank === 2 ? "🥈" : "🥉";
+  return <article className={`leaderboard-podium-card rank-${rank}`}>
+    <span className="leaderboard-medal" aria-label={`Rank ${rank}`}>{medal}</span>
+    {entry ? <>
+      <Avatar name={entry.displayName} photoURL={entry.photoURL} className="leaderboard-avatar" />
+      <strong>{leaderboardHandle(entry)}</strong>
+      <b>{studyMinutes(entry.weeklySeconds)}</b>
+    </> : <>
+      <span className="leaderboard-avatar leaderboard-avatar-empty">—</span>
+      <strong>Open rank</strong>
+      <small>Waiting</small>
+    </>}
+  </article>;
+}
+
+function LeaderboardSheet({ mode, entries, currentUid, loading, onModeChange, onClose }: { mode: "friends" | "public"; entries: StudyLeaderboardEntry[]; currentUid: string; loading: boolean; onModeChange: (mode: "friends" | "public") => void; onClose: () => void }) {
+  const ranked = entries
+    .filter((entry) => entry.weeklySeconds > 0 && Boolean(leaderboardHandle(entry)))
+    .sort((a, b) => b.weeklySeconds - a.weeklySeconds || b.totalSeconds - a.totalSeconds || leaderboardHandle(a).localeCompare(leaderboardHandle(b)))
+    .map((entry) => ({ ...entry, username: leaderboardHandle(entry) }))
+    .slice(0, 10);
+  const podium = [ranked[1], ranked[0], ranked[2]] as const;
+  const lowerRanks = Array.from({ length: 7 }, (_, index) => ranked[index + 3]);
+  return <div className="task-sheet-backdrop" role="presentation" onMouseDown={onClose}><section className="leaderboard-sheet" role="dialog" aria-modal="true" aria-label="Study leaderboard" onMouseDown={(event) => event.stopPropagation()}><div className="sheet-handle"/><header className="sheet-page-header"><button className="icon" type="button" aria-label="Close leaderboard" onClick={onClose}>×</button><div><strong>{mode === "friends" ? "Friends leaderboard" : "Public leaderboard"}</strong><small>Top 10 · weekly totals reset every Monday</small></div><span>🏆</span></header><div className="leaderboard-sheet-body"><div className="leaderboard-mode-tabs"><button className={mode === "friends" ? "active" : ""} type="button" onClick={() => onModeChange("friends")}>Friends</button><button className={mode === "public" ? "active" : ""} type="button" onClick={() => onModeChange("public")}>Public</button></div>{loading ? <p className="leaderboard-disclaimer">Loading study totals…</p> : !ranked.length ? <p className="leaderboard-disclaimer">No saved study sessions yet.</p> : <><div className="leaderboard-podium">{podium.map((entry, index) => <LeaderboardPodiumCard key={entry?.uid || `empty-${index}`} entry={entry} rank={index === 0 ? 2 : index === 1 ? 1 : 3} />)}</div><p className="leaderboard-disclaimer">Finished study sessions saved to your account.</p><p className="leaderboard-section-label">Ranks 4–10</p><div className="leaderboard-ranks">{lowerRanks.map((entry, index) => <article className={entry ? "" : "rank-waiting"} key={entry?.uid || `waiting-${index + 4}`}><b>{index + 4}</b><div><strong>{entry ? `@${entry.username}` : "Open rank"}</strong></div><span>{entry ? studyMinutes(entry.weeklySeconds) : "—"}</span></article>)}</div></>}</div></section></div>;
+}
+
+function JourneySheet({ streak, league, weeklySeconds, totalSeconds, nextStreakMilestone, nextLeaguePromotion, onClose }: { streak: number; league: string; weeklySeconds: number; totalSeconds: number; nextStreakMilestone: number; nextLeaguePromotion: number; onClose: () => void }) {
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const milestones = [7, 30, 100, 365];
+  const [showLeagueInfo, setShowLeagueInfo] = useState(false);
+  const divisions = [["Bronze I", 0], ["Bronze II", 10], ["Bronze III", 20], ["Silver I", 35], ["Silver II", 50], ["Silver III", 70], ["Gold I", 90], ["Gold II", 120], ["Gold III", 160], ["Platinum I", 220], ["Platinum II", 300], ["Platinum III", 400], ["Legendary", 550]] as const;
+  const toggleInfo = (event: ReactMouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setShowLeagueInfo((value) => !value);
+  };
+  return (
+    <div className="task-sheet-backdrop" role="presentation" onMouseDown={onClose}>
+      <section className="journey-sheet" role="dialog" aria-modal="true" aria-label="Your study journey" onMouseDown={(event) => event.stopPropagation()}>
+        <div className="sheet-handle" />
+        <header className="sheet-page-header"><button className="icon" type="button" aria-label="Close journey" onClick={onClose}>×</button><div><strong>Your journey</strong><small>Weekly league · daily streak</small></div><span>✦</span></header>
+        <div className="journey-sheet-body">
+          <section className="journey-highlight"><span>🔥</span><div><small>ACTIVE STREAK</small><strong>{streak} day{streak === 1 ? "" : "s"}</strong><p>Next streak milestone: {nextStreakMilestone} active days</p></div></section>
+          <section className="journey-league">
+            <div className="league-heading"><span className="sheet-label">WEEKLY LEAGUE</span><button type="button" className="league-info-button" aria-expanded={showLeagueInfo} aria-controls="league-guide" aria-label="Open league guide" title="Open league guide" onPointerDown={(event) => event.stopPropagation()} onMouseDown={(event) => event.stopPropagation()} onClick={toggleInfo}><span aria-hidden="true">i</span></button></div>
+            <div className="league-current"><i className={`league-crest ${league.split(" ")[0].toLowerCase()}`}>{league === "Legendary" ? "★" : league.split(" ")[1]}</i><div><strong>{league}</strong><p>{Math.floor(weeklySeconds / 3600)}h {Math.floor((weeklySeconds % 3600) / 60)}m this week · {Math.max(0, nextLeaguePromotion - Math.floor(weeklySeconds / 3600))}h to promote</p></div></div>
+            <div className="league-zones"><span className="promotion"><b>Next division</b><small>Reach the next hour target</small></span><span className="safe"><b>Current</b><small>Your saved weekly time</small></span><span className="demotion"><b>New week</b><small>Weekly total resets Monday</small></span></div>
+            {showLeagueInfo && <aside className="league-guide" id="league-guide" role="region" aria-label="Weekly league guide"><div className="league-guide-title"><strong>How the league works</strong><button type="button" className="league-guide-close" aria-label="Close league guide" onClick={() => setShowLeagueInfo(false)}>×</button></div><p>Your division is based on saved study time. Weekly totals reset on Monday, while your all-time total and streak history stay saved.</p><strong className="league-guide-subtitle">Divisions</strong><div>{divisions.map(([division, hoursRequired]) => { const tier = division.split(" ")[0].toLowerCase(); const roman = division.split(" ")[1] || "★"; const currentHours = Math.floor(weeklySeconds / 3600); return <span className={league === division ? "current" : currentHours >= hoursRequired ? "unlocked" : ""} key={division}><i className={`league-crest ${tier}`}>{roman}</i><b>{division}</b><small>{hoursRequired === 0 ? "Starting rank" : `${hoursRequired}h / week`}</small></span>; })}</div></aside>}
+          </section>
+          <section><p className="sheet-label">STREAK MILESTONES</p><div className="journey-milestones">{milestones.map((milestone) => <article className={streak >= milestone ? "reached" : ""} key={milestone}><span>{streak >= milestone ? "✓" : milestone}</span><div><strong>{milestone} days</strong><small>Keep your daily study streak alive</small></div></article>)}</div></section>
+          <section className="journey-stats"><article><small>STUDIED TOTAL</small><strong>{hours}h {minutes}m</strong></article><article><small>THIS WEEK</small><strong>{Math.floor(weeklySeconds / 3600)}h {Math.floor((weeklySeconds % 3600) / 60)}m</strong></article></section>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function StudyHome({ uid, onOpenDiscover }: { uid: string; onOpenDiscover: () => void }) {
+  const studyKey = `cochat-study-${auth?.currentUser?.uid || "preview"}`;
+  const dayNumber = Math.floor(Date.now() / 86_400_000);
+  const weekKey = currentStudyWeekKey();
+  const [seconds, setSeconds] = useState(() => { try { return Number(JSON.parse(localStorage.getItem(studyKey) || "{}").elapsedSeconds || 0); } catch { return 0; } });
+  const [totalSeconds, setTotalSeconds] = useState(() => { try { return Number(JSON.parse(localStorage.getItem(studyKey) || "{}").totalSeconds || 0); } catch { return 0; } });
+  const [weeklySeconds, setWeeklySeconds] = useState(() => { try { const saved = JSON.parse(localStorage.getItem(studyKey) || "{}"); return saved.weekKey === weekKey ? Number(saved.weeklySeconds || 0) : 0; } catch { return 0; } });
+  const [statsLoaded, setStatsLoaded] = useState(false);
+
+  const [studyDays, setStudyDays] = useState<string[]>(() => { try { const value = JSON.parse(localStorage.getItem(studyKey) || "{}").studyDays; return Array.isArray(value) ? value.filter((day): day is string => typeof day === "string") : []; } catch { return []; } });
+  const [completedTasks, setCompletedTasks] = useState(() => { try { return Number(JSON.parse(localStorage.getItem(studyKey) || "{}").completedTasks || 0); } catch { return 0; } });
+  const [tasks, setTasks] = useState<StudyTask[]>(() => { try { const saved = JSON.parse(localStorage.getItem(studyKey) || "{}"); if (saved.dailyDay === dayNumber && Array.isArray(saved.tasks)) return saved.tasks.map((task: Partial<StudyTask>) => ({ ...task, action: task.action || studyTaskAction(task.title || "") })) as StudyTask[]; } catch { /* local data is optional */ } return dailyStudyTasks(dayNumber); });
+  const [taskSheetOpen, setTaskSheetOpen] = useState(false);
+  const [timerSetupOpen, setTimerSetupOpen] = useState(false);
+  const [timerTaskId, setTimerTaskId] = useState<string | null>(null);
+  const [targetSeconds, setTargetSeconds] = useState(() => { try { return Number(JSON.parse(localStorage.getItem(studyKey) || "{}").targetSeconds || 0); } catch { return 0; } });
+  const [leaderboardMode, setLeaderboardMode] = useState<"friends" | "public">("friends");
+  const [leaderboardOpen, setLeaderboardOpen] = useState(false);
+  const [leaderboardEntries, setLeaderboardEntries] = useState<StudyLeaderboardEntry[]>([]);
+  const [studyZoneEntries, setStudyZoneEntries] = useState<StudyLeaderboardEntry[]>([]);
+  const [viewerUsername, setViewerUsername] = useState("");
+  const [studyFriendIds, setStudyFriendIds] = useState<string[]>([]);
+  const [leaderboardLoading, setLeaderboardLoading] = useState(true);
+  const [leaderboardRefreshKey, setLeaderboardRefreshKey] = useState(0);
+  const [journeyOpen, setJourneyOpen] = useState(false);
+  const [timerStartedAt, setTimerStartedAt] = useState<number | null>(() => { try { return Number(JSON.parse(localStorage.getItem(studyKey) || "{}").timerStartedAt) || null; } catch { return null; } });
+  const [running, setRunning] = useState(() => { try { const saved = JSON.parse(localStorage.getItem(studyKey) || "{}"); return Boolean(saved.timerRunning && saved.timerStartedAt && saved.targetSeconds); } catch { return false; } });
+  const timerNotificationState = useRef<"idle" | "ready" | "running" | "paused" | "complete">("idle");
+  const timerRef = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    const sheetOpen = taskSheetOpen || timerSetupOpen || leaderboardOpen || journeyOpen;
+    if (!sheetOpen) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = previousOverflow; };
+  }, [taskSheetOpen, timerSetupOpen, leaderboardOpen, journeyOpen]);
+  useEffect(() => {
+    if (!timerSetupOpen) return;
+    // The timer controls sit below the study dashboard. Bring them to the
+    // reading position as soon as the sheet opens, so users never have to
+    // hunt for the timer after tapping a task or Set timer.
+    const frame = window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => timerRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [timerSetupOpen]);
+  useEffect(() => {
+    const refreshDailyTasks = () => {
+      const currentDay = Math.floor(Date.now() / 86_400_000);
+      if (currentDay === dayNumber) return;
+      setTasks((current) => [...current.filter((task) => task.kind === "personal"), ...dailyStudyTasks(currentDay)]);
+      setCompletedTasks(0);
+    };
+    const interval = window.setInterval(refreshDailyTasks, 60_000);
+    return () => window.clearInterval(interval);
+  }, [dayNumber]);
+  useEffect(() => {
+    listFriends(uid).then((friends) => setStudyFriendIds(friends.map((friend) => friend.uid))).catch(() => setStudyFriendIds([]));
+  }, [uid]);
+  useEffect(() => {
+    let cancelled = false;
+    const cached = localStorage.getItem(`cochat-username-${uid}`) || "";
+    if (cached) setViewerUsername(cached);
+    void getUserProfile(uid).then((profile) => {
+      if (!cancelled && profile?.username) setViewerUsername(profile.username);
+    }).catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [uid]);
+  useEffect(() => {
+    let cancelled = false;
+    if (!statsLoaded) {
+      if (leaderboardOpen) setLeaderboardLoading(true);
+      return () => { cancelled = true; };
+    }
+    const refresh = async () => {
+      if (leaderboardOpen) setLeaderboardLoading(true);
+      const currentUser = auth?.currentUser;
+      const currentSessionSeconds = running ? Math.max(0, seconds) : 0;
+      const localEntry: StudyLeaderboardEntry = {
+        uid,
+        displayName: currentUser?.displayName || "You",
+        username: viewerUsername || localStorage.getItem(`cochat-username-${uid}`) || "user",
+        photoURL: currentUser?.photoURL || "",
+        weeklySeconds: Math.max(0, weeklySeconds + currentSessionSeconds),
+        totalSeconds: Math.max(0, totalSeconds + currentSessionSeconds),
+        active: running,
+        label: running ? "In a focus session" : "Your saved study time",
+      };
+      const withLocalUser = (entries: StudyLeaderboardEntry[]) => {
+        const withoutDuplicate = entries.filter((entry) => entry.uid !== uid);
+        return [...withoutDuplicate, ...(localEntry.weeklySeconds > 0 ? [localEntry] : [])]
+          .sort((a, b) => b.weeklySeconds - a.weeklySeconds || b.totalSeconds - a.totalSeconds || leaderboardHandle(a).localeCompare(leaderboardHandle(b)));
+      };
+      try {
+        if (leaderboardMode === "public" && leaderboardOpen) {
+          const entries = await getStudyLeaderboard("public", [], weekKey);
+          if (!cancelled) setLeaderboardEntries(withLocalUser(entries));
+          return;
+        }
+        const entries = await getStudyLeaderboard("friends", [uid, ...studyFriendIds], weekKey);
+        if (!cancelled) {
+          setStudyZoneEntries(entries);
+          if (leaderboardMode === "friends") setLeaderboardEntries(withLocalUser(entries));
+        }
+      } catch {
+        if (!cancelled) {
+          setStudyZoneEntries(running ? [localEntry] : []);
+          if (leaderboardOpen) setLeaderboardEntries(localEntry.weeklySeconds > 0 || localEntry.totalSeconds > 0 ? [localEntry] : []);
+        }
+      } finally {
+        if (!cancelled) setLeaderboardLoading(false);
+      }
+    };
+    void refresh();
+    return () => { cancelled = true; };
+  }, [uid, weekKey, studyFriendIds, viewerUsername, leaderboardMode, leaderboardOpen, leaderboardRefreshKey, weeklySeconds, totalSeconds, seconds, running, statsLoaded]);
+  useEffect(() => {
+    void updateStudyPresence(running, timerTaskId ? "Working on an active task" : "In a focus session").catch(() => undefined);
+    const timer = window.setInterval(() => void updateStudyPresence(running, timerTaskId ? "Working on an active task" : "In a focus session").catch(() => undefined), 60000);
+    return () => window.clearInterval(timer);
+  }, [uid, running, timerTaskId]);
+  useEffect(() => () => { void updateStudyPresence(false).catch(() => undefined); }, [uid]);
+  useEffect(() => {
+    let cancelled = false;
+    void getStudyStats(weekKey).then((stats) => {
+      if (cancelled || !stats) return;
+      let local: { totalSeconds?: number; weeklySeconds?: number; weekKey?: string; studyDays?: unknown[] } = {};
+      try { local = JSON.parse(localStorage.getItem(studyKey) || "{}"); } catch { /* local cache is optional */ }
+      const localDays = Array.isArray(local.studyDays) ? local.studyDays.filter((day): day is string => typeof day === "string") : [];
+      setTotalSeconds(Math.max(0, stats.totalSeconds, Number(local.totalSeconds || 0)));
+      // The server is authoritative for the current Monday-to-Sunday window;
+      // never resurrect a stale local weekly total after the reset.
+      setWeeklySeconds(Math.max(0, stats.weeklySeconds));
+      setStudyDays([...new Set([...localDays, ...stats.studyDays])].sort().slice(-730));
+    }).catch(() => undefined).finally(() => { if (!cancelled) setStatsLoaded(true); });
+    return () => { cancelled = true; };
+  }, [weekKey, uid]);
+  useEffect(() => {
+    if (!running) return;
+    const updateElapsed = () => {
+      if (!timerStartedAt) return;
+      const elapsed = Math.min(targetSeconds || Number.MAX_SAFE_INTEGER, Math.max(0, Math.floor((Date.now() - timerStartedAt) / 1000)));
+      setSeconds(elapsed);
+      if (targetSeconds && elapsed >= targetSeconds) setRunning(false);
+    };
+    updateElapsed();
+    const timer = window.setInterval(updateElapsed, 1000);
+    return () => window.clearInterval(timer);
+  }, [running, targetSeconds, timerStartedAt]);
+  const shownSeconds = targetSeconds ? Math.max(0, targetSeconds - seconds) : seconds;
+  const minutes = Math.floor(shownSeconds / 60);
+  const display = `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}:${String(shownSeconds % 60).padStart(2, "0")}`;
+  const progress = targetSeconds ? Math.min(100, Math.round((seconds / targetSeconds) * 100)) : Math.min(100, Math.round((seconds / 3600) * 100));
+  const saveSession = () => {
+    if (seconds <= 0) return;
+    notifyStudyTimerComplete();
+    const today = localStudyDateKey();
+    const nextTotal = totalSeconds + seconds;
+    const nextWeekly = weeklySeconds + seconds;
+    const nextDays = studyDays.includes(today) ? studyDays : [...studyDays, today].slice(-730);
+    void saveStudySession(seconds, weekKey, today).then((saved) => {
+      if (isSupabaseChatEnabled()) {
+        setTotalSeconds((value) => Math.max(value, saved.totalSeconds));
+        setWeeklySeconds((value) => Math.max(value, saved.weeklySeconds));
+        setStudyDays((value) => [...new Set([...value, ...saved.studyDays, today])].sort().slice(-730));
+      }
+      setLeaderboardRefreshKey((value) => value + 1);
+    }).catch(() => undefined);
+    setTotalSeconds(nextTotal);
+    setWeeklySeconds(nextWeekly);
+    setStudyDays(nextDays);
+    setSeconds(0);
+    setTargetSeconds(0);
+    setRunning(false); setTimerStartedAt(null); setTimerTaskId(null);
+    try { localStorage.setItem(studyKey, JSON.stringify({ totalSeconds: nextTotal, weeklySeconds: nextWeekly, weekKey, studyDays: nextDays, completedTasks, tasks, dailyDay: dayNumber, targetSeconds: 0, elapsedSeconds: 0, timerStartedAt: null, timerRunning: false })); } catch { /* storage is optional */ }
+  };
+  useEffect(() => { /* weekly values come from the server stats hydration */ }, [studyKey, weekKey]);
+  // The timestamp carries a running timer across reloads; avoid writing local state every second.
+  useEffect(() => { if (!statsLoaded) return; try { localStorage.setItem(studyKey, JSON.stringify({ totalSeconds, weeklySeconds, weekKey, studyDays, completedTasks, tasks, dailyDay: dayNumber, targetSeconds, elapsedSeconds: seconds, timerStartedAt, timerRunning: running })); } catch { /* local data is optional */ } }, [studyKey, totalSeconds, weeklySeconds, weekKey, studyDays, completedTasks, tasks, dayNumber, targetSeconds, timerStartedAt, running, statsLoaded]);
+  const studiedHours = Math.floor(totalSeconds / 3600);
+  const studiedMinutes = Math.floor((totalSeconds % 3600) / 60);
+  const studiedLabel = `${studiedHours}h ${studiedMinutes}m`;
+  const today = new Date();
+  const activeStreak = (() => { let streak = 0; for (let index = 0; index < 730; index += 1) { const date = new Date(today); date.setDate(today.getDate() - index); const key = localStudyDateKey(date); if (index === 0 && (seconds > 0 || running)) { streak += 1; continue; } if (!studyDays.includes(key)) break; streak += 1; } return streak; })();
+  const weeklyHours = Math.floor(weeklySeconds / 3600);
+  const league = weeklyHours >= 40 ? "Legendary" : weeklyHours >= 30 ? "Platinum III" : weeklyHours >= 24 ? "Platinum II" : weeklyHours >= 18 ? "Platinum I" : weeklyHours >= 14 ? "Gold III" : weeklyHours >= 11 ? "Gold II" : weeklyHours >= 8 ? "Gold I" : weeklyHours >= 6 ? "Silver III" : weeklyHours >= 4 ? "Silver II" : weeklyHours >= 2 ? "Silver I" : weeklyHours >= 1 ? "Bronze III" : "Bronze I";
+  const nextStreakMilestone = [7, 30, 100, 365].find((milestone) => milestone > activeStreak) || 365;
+  const nextLeaguePromotion = [1, 2, 4, 6, 8, 11, 14, 18, 24, 30, 40].find((threshold) => threshold > weeklyHours) || 40;
+  const activeTasks = tasks.filter((task) => task.startedAt && !task.completedAt);
+  const startTask = (task: StudyTask) => {
+    setTasks((current) => current.map((item) => item.id === task.id ? { ...item, startedAt: item.startedAt || Date.now() } : item));
+    if (task.action === "discover") { setTaskSheetOpen(false); onOpenDiscover(); return; }
+    setTimerTaskId((current) => current || task.id);
+    setTaskSheetOpen(false);
+    setTimerSetupOpen(true);
+  };
+  const completeTask = (id: string) => {
+    const task = tasks.find((item) => item.id === id);
+    if (task && !task.completedAt) setCompletedTasks((value) => value + 1);
+    setTasks((current) => current.map((item) => item.id === id ? { ...item, completedAt: Date.now() } : item));
+    setTimerTaskId((current) => current === id ? null : current);
+  };
+  const addTask = (title: string) => setTasks((current) => current.filter((task) => task.kind !== "personal").length >= 5 ? current : [...current, { id: `personal-${Date.now()}`, title, kind: "personal", action: "timer" }]);
+  const focusTask = (task: StudyTask) => {
+    if (task.action === "discover") { onOpenDiscover(); return; }
+    setTimerTaskId(task.id);
+    setTimerSetupOpen(true);
+  };
+  const applyTimer = (duration: number) => { setRunning(false); setTimerStartedAt(null); setSeconds(0); setTargetSeconds(duration); setTimerSetupOpen(false); window.setTimeout(() => timerRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }), 0); };
+  const toggleTimer = () => {
+    if (!targetSeconds) { setTimerSetupOpen(true); return; }
+    if (running) { setRunning(false); setTimerStartedAt(null); return; }
+    if (seconds >= targetSeconds) { setSeconds(0); setTimerStartedAt(Date.now()); } else setTimerStartedAt(Date.now() - seconds * 1000);
+    setRunning(true);
+  };
+  useEffect(() => {
+    const nextState: "idle" | "ready" | "running" | "paused" | "complete" = !targetSeconds
+      ? "idle"
+      : seconds >= targetSeconds
+        ? "complete"
+        : running
+          ? "running"
+          : seconds > 0
+            ? "paused"
+            : "ready";
+    if (nextState === timerNotificationState.current) return;
+    timerNotificationState.current = nextState;
+    if (nextState === "idle" || nextState === "ready") {
+      clearStudyTimerNotification();
+      return;
+    }
+    if (nextState === "running") notifyStudyTimer(Math.max(0, targetSeconds - seconds), true);
+    if (nextState === "paused") notifyStudyTimer(Math.max(0, targetSeconds - seconds), false);
+  }, [running, targetSeconds, seconds]);
+  useEffect(() => listenNotificationActions((event) => {
+    if (event.tag !== "cochat-study-timer") return;
+    if (event.action === "pause-timer" && running) { setRunning(false); setTimerStartedAt(null); }
+    if (event.action === "resume-timer" && targetSeconds) { setTimerStartedAt(Date.now() - seconds * 1000); setRunning(true); }
+    if (event.action === "finish-timer" && seconds > 0) saveSession();
+  }), [running, targetSeconds, seconds]);
+  return (
+    <div className="study-home">
+      <section className="study-shortcuts"><button type="button" onClick={() => setTaskSheetOpen(true)}><span>✓</span><div><strong>Tasks</strong><small>{tasks.filter((task) => task.completedAt).length}/{tasks.length} complete</small></div></button><button type="button" onClick={() => setLeaderboardOpen(true)}><span>🏆</span><div><strong>Leaderboard</strong><small>Friends & public</small></div></button><button type="button" onClick={() => setJourneyOpen(true)}><span>✦</span><div><strong>Journey</strong><small>{league}</small></div></button></section>
+      {activeTasks.length > 0 && <section className="active-tasks"><div className="active-tasks-heading"><div><span className="kicker">IN PROGRESS</span><strong>{activeTasks.length} active task{activeTasks.length === 1 ? "" : "s"}</strong></div><button className="secondary compact" type="button" onClick={() => setTaskSheetOpen(true)}>View tasks</button></div>{activeTasks.map((task) => <article key={task.id}><span>◷</span><div><strong>{task.title}</strong><small>{task.action === "discover" ? "Ready to help in Discover" : `Started ${Math.max(1, Math.floor((Date.now() - (task.startedAt || Date.now())) / 60000))} min ago`}</small></div><button className="icon" type="button" aria-label={`Continue ${task.title}`} onClick={() => focusTask(task)}>→</button></article>)}</section>}
+      <section className="timer-card" ref={timerRef}><div className="timer-ring" style={{ "--progress": `${progress}%` } as CSSProperties}><strong>{display}</strong><span>{running ? (timerTaskId ? "task timer running" : "focus session running") : targetSeconds ? "timer ready" : "choose a duration"}</span></div>{targetSeconds > 0 && <button className="timer-change" type="button" onClick={() => setTimerSetupOpen(true)}>Change · {Math.floor(targetSeconds / 3600) ? `${Math.floor(targetSeconds / 3600)}h ` : ""}{Math.floor((targetSeconds % 3600) / 60)}m</button>}<div className="timer-actions"><button className="primary" type="button" onClick={toggleTimer}>{running ? "Pause timer" : targetSeconds ? "Start timer" : "Set timer"}</button><button className="secondary" type="button" onClick={saveSession} disabled={!seconds}>Finish & save</button><button className="secondary" type="button" onClick={() => { setRunning(false); setTimerStartedAt(null); setTimerTaskId(null); setSeconds(0); setTargetSeconds(0); }}>Reset</button></div><small className="timer-note">Your countdown keeps its place if you close or background the app. It saves only when you finish.</small></section>
+      <div className="study-grid"><article><span className="metric-icon">🔥</span><strong>{activeStreak} days</strong><small>active journey</small></article><article><span className="metric-icon">✦</span><strong>{league}</strong><small>current league</small></article><article><span className="metric-icon">⌁</span><strong>{studiedLabel}</strong><small>studied total</small></article></div>
+      <section className="study-zone"><header><div><span className="kicker">STUDY ZONE</span><h3>Focus together</h3></div><span className="study-zone-count">{studyZoneEntries.filter((entry) => entry.active).length + (running && !studyZoneEntries.some((entry) => entry.uid === uid) ? 1 : 0)} studying</span></header>{studyZoneEntries.some((entry) => entry.active) || running ? <>{running && <article className="study-zone-person"><Avatar name={auth?.currentUser?.displayName || "You"} photoURL={auth?.currentUser?.photoURL || undefined}/><div><strong>{auth?.currentUser?.displayName || "You"}</strong><small>{timerTaskId ? "Working on an active task" : "In a focus session"}</small></div><span className="presence-dot"/></article>}{studyZoneEntries.filter((entry) => entry.active && entry.uid !== uid).map((entry) => <article className="study-zone-person" key={entry.uid}><Avatar name={entry.displayName} photoURL={entry.photoURL || undefined}/><div><strong>{entry.displayName}</strong><small>{entry.label || "In a focus session"}</small></div><span className="presence-dot"/></article>)}</> : <div className="study-zone-empty"><strong>Start a session to enter the zone</strong><span>Friends who are studying or doing tasks will appear here with their profile photos.</span></div>}</section>
+      {taskSheetOpen && <StudyTaskSheet tasks={tasks} onClose={() => setTaskSheetOpen(false)} onStart={startTask} onComplete={completeTask} onAdd={addTask} onRemove={(id) => setTasks((current) => current.filter((task) => task.id !== id))}/>}
+      {timerSetupOpen && <TimerSetupSheet initialSeconds={targetSeconds} onClose={() => setTimerSetupOpen(false)} onApply={applyTimer}/>}
+      {leaderboardOpen && <LeaderboardSheet mode={leaderboardMode} entries={leaderboardEntries} currentUid={uid} loading={leaderboardLoading} onModeChange={setLeaderboardMode} onClose={() => setLeaderboardOpen(false)}/>}
+      {journeyOpen && <JourneySheet streak={activeStreak} league={league} weeklySeconds={weeklySeconds} totalSeconds={totalSeconds} nextStreakMilestone={nextStreakMilestone} nextLeaguePromotion={nextLeaguePromotion} onClose={() => setJourneyOpen(false)}/>}
+    </div>
+  );
+}
+
+type TwittPreview = { id: string; authorUid: string; author: string; handle: string; avatar: string; body: string; likes: number; comments: number; views: string; age: string; createdAt: number; community: string; feedType: "study" | "social"; expiresAt?: string | null; seen?: boolean; liked?: boolean; attachment?: TwittAttachment | null; authorProfile?: TwittAuthorProfile | null };
+
+function previewFromTwitt(item: TwittRecord, viewerUid: string): TwittPreview {
+  const profile = item.authorProfile || null;
+  const isViewer = item.uid === viewerUid;
+  const isAnonymous = !isViewer && profile?.hideTwittIdentity === true;
+  const visibleProfile = isAnonymous && profile ? { ...profile, photoURL: "" } : profile;
+  const visiblePhotoURL = usablePhotoURL(visibleProfile?.photoURL);
+  const now = Date.now();
+  return {
+    id: item.id,
+    authorUid: item.uid,
+    author: isViewer ? "You" : isAnonymous ? "Anonymous" : profile?.displayName || "Anonymous",
+    handle: isViewer || !isAnonymous ? profile?.username || "" : "",
+    avatar: visiblePhotoURL || DEFAULT_AVATAR_URL,
+    body: item.body,
+    likes: Math.max(0, item.likes),
+    liked: Boolean(item.liked),
+    comments: Math.max(0, item.comments),
+    views: String(item.views),
+    attachment: item.attachment,
+    age: `${Math.max(1, Math.round((now - (item.createdAt?.toMillis?.() || now)) / 3_600_000))} hr`,
+    createdAt: item.createdAt?.toMillis?.() || now,
+    community: item.community,
+    feedType: item.feedType,
+    expiresAt: item.expiresAt,
+    seen: item.seen,
+    authorProfile: visibleProfile ? { ...visibleProfile, photoURL: visiblePhotoURL } : null,
+  };
+}
+
+function CommentSheet({ post, comments, loading, hasMore, names, currentUid, onClose, onLoadMore, onSubmit, onLike, onDelete }: {
+  post: TwittPreview; comments: TwittComment[]; loading: boolean; hasMore: boolean; names: Record<string, string>; currentUid?: string;
+  onClose: () => void; onLoadMore: () => void; onSubmit: (body: string, file?: File | null) => void; onLike: (comment: TwittComment) => void; onDelete: (comment: TwittComment) => void;
+}) {
+  const [draft, setDraft] = useState("");
+  const [file, setFile] = useState<File | null>(null);
+  const submit = (event: FormEvent) => { event.preventDefault(); const body = draft.trim(); if (!body && !file) return; onSubmit(body, file); setDraft(""); setFile(null); };
+  return <div className="comment-sheet-backdrop" role="presentation" onMouseDown={onClose}>
+    <section className="comment-sheet" role="dialog" aria-modal="true" aria-label="Comments" onMouseDown={(event) => event.stopPropagation()}>
+      <div className="sheet-handle" />
+      <header className="comment-sheet-header"><button className="icon" type="button" aria-label="Close comments" onClick={onClose}>×</button><strong>Comments</strong><span>{post.comments}</span></header>
+      <div className="comment-sheet-post"><strong>{post.author}</strong><small>@{post.handle}</small><p>{post.body}</p></div>
+      <div className="comment-sheet-list">
+        {loading && !comments.length && <p className="comment-loading">Loading comments…</p>}
+        {!loading && !comments.length && <div className="comment-empty"><strong>Start the conversation</strong><span>Be the first to leave a helpful comment.</span></div>}
+        {comments.map((comment) => { const name = names[comment.uid] || "Anonymous"; return <article className="sheet-comment" key={comment.id}><div className="comment-avatar">{name === "Anonymous" ? "" : name.slice(0, 2).toUpperCase()}</div><div className="sheet-comment-body"><div><strong>{name === "Anonymous" ? name : `@${name}`}</strong>{comment.uid === currentUid && <button className="comment-delete" type="button" onClick={() => onDelete(comment)}>Delete</button>}</div><p>{comment.body}</p>{comment.attachment && (comment.attachment.type.startsWith("image/") ? <a className="twitt-media-preview" href={comment.attachment.url} target="_blank" rel="noreferrer" download={comment.attachment.name}><img loading="lazy" decoding="async" src={comment.attachment.url} alt={comment.attachment.name} /><span>Open / save image</span></a> : <a className="twitt-attachment" href={comment.attachment.url} target="_blank" rel="noreferrer" download={comment.attachment.name}>📄 {comment.attachment.name} · Open / save</a>)}<button className={comment.liked ? "comment-like liked" : "comment-like"} type="button" onClick={() => onLike(comment)}>♡ {comment.likes || 0}</button></div></article>; })}
+        {hasMore && <button className="load-comments" type="button" disabled={loading} onClick={onLoadMore}>{loading ? "Loading…" : "Load more comments"}</button>}
+      </div>
+      <form className="comment-sheet-compose" onSubmit={submit}><input value={draft} onChange={(event) => setDraft(event.target.value.slice(0, 240))} placeholder="Add a thoughtful comment" autoFocus /><label className="comment-media-picker" title="Photo or PDF, max 5 MB"><MediaIcon /><input type="file" accept="image/jpeg,image/png,image/webp,image/gif,application/pdf" onChange={(event) => setFile(event.target.files?.[0] || null)} /></label>{file && <small className="comment-file-name" title={file.name}>{file.name}</small>}<button className="primary compact" type="submit" disabled={!draft.trim() && !file}>Send</button></form>
+    </section>
+  </div>;
+}
+function TwittFeed({ initialCommunity = "all" }: { initialCommunity?: string }) {
+  const [feedType, setFeedType] = useState<"study" | "social">("study");
+  const [posts, setPosts] = useState<TwittPreview[]>([]);
+  const [authorNames, setAuthorNames] = useState<Record<string, string>>({});
+  const [authorProfiles, setAuthorProfiles] = useState<Record<string, UserProfile>>({});
+  const [authorLoading, setAuthorLoading] = useState(false);
+  const [visible, setVisible] = useState(20);
+  const [community, setCommunity] = useState<string>(initialCommunity);
+  const [following, setFollowing] = useState<string[]>([]);
+  const [friendIds, setFriendIds] = useState<string[]>([]);
+  const [composerOpen, setComposerOpen] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [publishError, setPublishError] = useState("");
+  const [draftCommunity, setDraftCommunity] = useState("jee");
+  const [draftFile, setDraftFile] = useState<File | null>(null);
+  const [cameraDataUrl, setCameraDataUrl] = useState<string | null>(null);
+  const [cameraFilter, setCameraFilter] = useState<CameraFilter>("none");
+  const [cameraIntensity, setCameraIntensity] = useState(0.85);
+  const [cameraBusy, setCameraBusy] = useState(false);
+  const [cameraOpen, setCameraOpen] = useState(false);
+  const [feedSneakOpen, setFeedSneakOpen] = useState(false);
+  const [feedSneakDataUrl, setFeedSneakDataUrl] = useState<string | null>(null);
+  const [feedSneakFriends, setFeedSneakFriends] = useState<UserProfile[]>([]);
+  const [feedSneakSelected, setFeedSneakSelected] = useState<string[]>([]);
+  const [feedSneakSearch, setFeedSneakSearch] = useState("");
+  const [feedSneakBusy, setFeedSneakBusy] = useState(false);
+  const [commenting, setCommenting] = useState<string | null>(null);
+  const [postMenu, setPostMenu] = useState<string | null>(null);
+  const [remoteCursor, setRemoteCursor] = useState<Awaited<ReturnType<typeof loadTwittPage>>["cursor"]>(null);
+  const [remoteHasMore, setRemoteHasMore] = useState(false);
+  const [remoteLoading, setRemoteLoading] = useState(true);
+  const [remoteError, setRemoteError] = useState("");
+  const viewedPosts = useRef(new Set<string>());
+  const reactionKey = `cochat-discovery-reactions-${auth?.currentUser?.uid || "preview"}`;
+  const [likedPostIds, setLikedPostIds] = useState<string[]>(() => { try { const value = JSON.parse(localStorage.getItem(reactionKey) || "{}"); return Array.isArray(value.posts) ? value.posts.filter((id: unknown): id is string => typeof id === "string") : []; } catch { return []; } });
+  const [likedCommentIds, setLikedCommentIds] = useState<string[]>(() => { try { const value = JSON.parse(localStorage.getItem(reactionKey) || "{}"); return Array.isArray(value.comments) ? value.comments.filter((id: unknown): id is string => typeof id === "string") : []; } catch { return []; } });
+  const [commentsByPost, setCommentsByPost] = useState<Record<string, Awaited<ReturnType<typeof loadTwittComments>>["items"]>>({});
+  const [commentCursors, setCommentCursors] = useState<Record<string, Awaited<ReturnType<typeof loadTwittComments>>["cursor"]>>({});
+  const [commentMore, setCommentMore] = useState<Record<string, boolean>>({});
+  const [commentLoading, setCommentLoading] = useState<string | null>(null);
+  const [commentNames, setCommentNames] = useState<Record<string, string>>({});
+  const [commentError, setCommentError] = useState("");
+  const [publishing, setPublishing] = useState(false);
+  const [busyDeletes, setBusyDeletes] = useState<string[]>([]);
+  const [focusedAuthor, setFocusedAuthor] = useState<UserProfile | null>(null);
+  const hiddenKey = `cochat-hidden-twitts-${auth?.currentUser?.uid || "preview"}`;
+  const captureNativeCamera = async () => {
+    setCameraBusy(true);
+    setPublishError("");
+    try {
+      const photo = await Camera.getPhoto({
+        resultType: CameraResultType.DataUrl,
+        source: CameraSource.Camera,
+        quality: 88,
+        width: 1800,
+        height: 1800,
+        promptLabelHeader: "Capture a moment",
+        promptLabelPhoto: "Choose from gallery",
+        promptLabelPicture: "Take photo",
+      });
+      if (!photo.dataUrl) throw new Error("No photo was captured.");
+      setCameraDataUrl(photo.dataUrl);
+      setCameraFilter("none");
+      setCameraIntensity(0.85);
+    } catch (error) {
+      const message = cameraErrorMessage(error);
+      if (message) setPublishError(message);
+    } finally {
+      setCameraBusy(false);
+    }
+  };
+  const captureCameraPhoto = () => {
+    setPublishError("");
+    if (navigator.mediaDevices && typeof navigator.mediaDevices.getUserMedia === "function") { setCameraOpen(true); return; }
+    if (Capacitor.isNativePlatform()) { void captureNativeCamera(); return; }
+    setPublishError("This browser does not support live camera access. Use a current browser over HTTPS.");
+  };
+  const prepareFeedSneak = async (dataUrl: string) => {
+    setCameraOpen(false);
+    setFeedSneakDataUrl(dataUrl);
+    setFeedSneakSelected([]);
+    setFeedSneakSearch("");
+    try { setFeedSneakFriends(await listFriends(auth?.currentUser?.uid || "")); setFeedSneakOpen(true); }
+    catch { setPublishError("Could not load your friends."); }
+  };
+  const sendFeedSneak = async () => {
+    const uid = auth?.currentUser?.uid;
+    if (!uid || !feedSneakDataUrl || !feedSneakSelected.length || feedSneakBusy) return;
+    setFeedSneakBusy(true);
+    try {
+      const file = await cameraDataUrlToFile(feedSneakDataUrl, "none", 1);
+      const sendWork = Promise.all(feedSneakSelected.map(async (recipientId) => { const profile = feedSneakFriends.find((item) => item.uid === recipientId); if (!profile) return; const conversationId = await createConversation(uid, profile); await sendSneak(conversationId, uid, recipientId, file); }));
+      await Promise.race([sendWork, new Promise<never>((_, reject) => window.setTimeout(() => reject(new Error("Sneak sending timed out. Check your connection and Supabase function logs.")), 30000))]);
+      setFeedSneakOpen(false); setFeedSneakDataUrl(null); setFeedSneakSelected([]);
+    } catch (error) { setPublishError(error instanceof Error ? error.message : "Could not send Sneak."); }
+    finally {
+      setFeedSneakBusy(false);
+      // Always dismiss the picker after the send attempt so a completed send
+      // cannot leave the Android WebView looking frozen.
+      setFeedSneakOpen(false);
+      setFeedSneakDataUrl(null);
+      setFeedSneakSelected([]);
+    }
+  };
+  const saveCameraCapture = async ({ dataUrl }: { dataUrl: string }) => {
+    try {
+      const response = await fetch(dataUrl);
+      const blob = await response.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = objectUrl;
+      link.download = `co-chat-${Date.now()}.jpg`;
+      link.rel = "noopener";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1500);
+    } catch {
+      setPublishError("Could not save the photo. Please try again.");
+    }
+  };
+  useEffect(() => {
+    if (!cameraDataUrl) return;
+    let active = true;
+    cameraDataUrlToFile(cameraDataUrl, cameraFilter, cameraIntensity)
+      .then((file) => { if (active) setDraftFile(file); })
+      .catch((error) => { if (active) setPublishError(error instanceof Error ? error.message : "Could not apply that filter."); });
+    return () => { active = false; };
+  }, [cameraDataUrl, cameraFilter, cameraIntensity]);
+  const [hiddenPosts, setHiddenPosts] = useState<string[]>(() => { try { const saved = JSON.parse(localStorage.getItem(hiddenKey) || "[]"); return Array.isArray(saved) ? saved : []; } catch { return []; } });
+  useEffect(() => { try { localStorage.setItem(reactionKey, JSON.stringify({ posts: likedPostIds, comments: likedCommentIds })); } catch { /* reaction cache is optional */ } }, [reactionKey, likedPostIds, likedCommentIds]);
+  useEffect(() => { setCommunity(initialCommunity); setVisible(3); }, [initialCommunity]);
+  useEffect(() => {
+    if (!composerOpen) return;
+    requestAnimationFrame(() => document.querySelector<HTMLElement>(".twitt-composer")?.scrollIntoView({ behavior: "smooth", block: "start" }));
+  }, [composerOpen]);
+  useEffect(() => {
+    if (!cameraOpen) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = previousOverflow; };
+  }, [cameraOpen]);
+  useEffect(() => { const open = () => setCameraOpen(true); window.addEventListener("cochat-open-camera", open); return () => window.removeEventListener("cochat-open-camera", open); }, []);
+  useEffect(() => {
+    const uid = auth?.currentUser?.uid;
+    if (!uid) return;
+    listFriends(uid).then((friends) => setFriendIds(friends.map((friend) => friend.uid))).catch(() => setFriendIds([]));
+  }, []);
+  useEffect(() => { try { localStorage.setItem(hiddenKey, JSON.stringify(hiddenPosts)); } catch { /* preferences are optional */ } }, [hiddenKey, hiddenPosts]);
+  useEffect(() => {
+    const viewerUid = auth?.currentUser?.uid;
+    if (!viewerUid || !firebaseReady) return undefined;
+    let active = true;
+    setRemoteLoading(true);
+    setRemoteError("");
+    loadTwittPage("all", null, { feedType, friendIds }).then((page) => {
+      if (!active) return;
+      {
+        const now = Date.now();
+        setAuthorLoading(true);
+        const hydrated = page.items.filter((item) => item.authorProfile?.username).reduce<Record<string, string>>((profiles, item) => { profiles[item.uid] = item.authorProfile!.username; return profiles; }, {});
+        setAuthorNames((current) => ({ ...current, ...hydrated }));
+        setPosts(page.items.map((item) => previewFromTwitt(item, viewerUid)));
+        setVisible(20);
+      }
+      setRemoteCursor(page.cursor);
+      setRemoteHasMore(page.hasMore);
+    }).catch((error) => { if (active) setRemoteError(error instanceof Error ? error.message : "Could not load real Twitts."); }).finally(() => { if (active) setRemoteLoading(false); });
+    return () => { active = false; };
+  }, [feedType, friendIds]);
+  const list = useMemo(() => {
+    const now = Date.now();
+    const eligible = posts.filter((post) => post.feedType === feedType && (feedType === "social" ? now - post.createdAt <= 24 * 3_600_000 : now - post.createdAt <= 7 * 24 * 3_600_000));
+    if (feedType === "social") return eligible.sort((a, b) => Number(a.seen) - Number(b.seen) || b.createdAt - a.createdAt);
+    return eligible.sort((a, b) => b.createdAt - a.createdAt);
+  }, [posts, feedType, friendIds]);
+  const loadMore = async () => {
+    if (visible < filtered.length) { setVisible((current) => current + 20); return; }
+    if (remoteCursor && remoteHasMore && !remoteLoading) {
+      setRemoteLoading(true);
+      try {
+        const page = await loadTwittPage("all", remoteCursor, { feedType, friendIds });
+        setAuthorLoading(true);
+        const viewerUid = auth?.currentUser?.uid || "";
+        const hydrated = page.items.filter((item) => item.authorProfile?.username).reduce<Record<string, string>>((profiles, item) => { profiles[item.uid] = item.authorProfile!.username; return profiles; }, {});
+        setAuthorNames((current) => ({ ...current, ...hydrated }));
+        setPosts((current) => [...current, ...page.items.map((item) => previewFromTwitt(item, viewerUid))]);
+        setRemoteCursor(page.cursor);
+        setRemoteHasMore(page.hasMore);
+        setVisible((current) => current + page.items.length);
+      } finally { setRemoteLoading(false); }
+      return;
+    }
+    setRemoteError("There are no more real Twitts to load.");
+  };
+  const filtered = list.filter((post) => !hiddenPosts.includes(post.id) && (community === "all" || post.community === community));
+  useEffect(() => {
+    const ids = [...new Set(posts.map((post) => post.authorUid).filter((uid) => uid && !authorNames[uid]))];
+    if (!ids.length) { setAuthorLoading(false); return; }
+    setAuthorLoading(true);
+    Promise.all(ids.map(async (uid) => [uid, await getUserProfile(uid)] as const)).then((items) => {
+      setAuthorNames((current) => {
+        const next = { ...current };
+        items.forEach(([uid, profile]) => { next[uid] = profile?.username || "__unavailable__"; if (profile?.username) next[profile.username] = profile.username; });
+        return next;
+      });
+      setAuthorProfiles((current) => {
+        const next = { ...current };
+        items.forEach(([uid, profile]) => { if (profile) { next[uid] = profile.hideTwittIdentity ? { ...profile, photoURL: "" } : profile; if (profile.username) next[profile.username] = profile; } });
+        return next;
+      });
+      setPosts((current) => current.map((post) => {
+        const profile = items.find(([uid]) => uid === post.authorUid)?.[1];
+        if (profile?.hideTwittIdentity && post.authorUid !== auth?.currentUser?.uid) return { ...post, handle: "", author: "Anonymous", avatar: DEFAULT_AVATAR_URL };
+        return profile?.username ? { ...post, handle: profile.username, author: post.author === "You" ? "You" : (profile.displayName || "Anonymous") } : { ...post, handle: "", author: post.author === "You" ? "You" : "Anonymous" };
+      }));
+    }).finally(() => { setAuthorLoading(false); setVisible(20); });
+  }, [posts, authorNames]);
+  useEffect(() => {
+    const uid = auth?.currentUser?.uid;
+    if (!uid || !firebaseReady) return;
+    filtered.slice(0, visible).forEach((post) => {
+      if (post.id.startsWith("local-") || viewedPosts.current.has(post.id)) return;
+      viewedPosts.current.add(post.id);
+      void recordTwittView(post.id, uid).then((counted) => {
+        if (counted) setPosts((current) => current.map((item) => item.id === post.id ? { ...item, views: String(Number(item.views || 0) + 1), seen: true } : item));
+      }).catch(() => viewedPosts.current.delete(post.id));
+    });
+  }, [filtered, visible]);
+  const handleLike = async (post: TwittPreview) => {
+    const nextLiked = !post.liked;
+    setPosts((current) => current.map((item) => item.id === post.id ? { ...item, likes: Math.max(0, item.likes + (nextLiked ? 1 : -1)), liked: nextLiked } : item));
+    setLikedPostIds((current) => nextLiked ? [...new Set([...current, post.id])] : current.filter((id) => id !== post.id));
+    const uid = auth?.currentUser?.uid;
+    if (!uid || post.id.startsWith("local-")) return;
+    try {
+      await toggleTwittLike(post.id, uid, nextLiked);
+    } catch (error) {
+      setPosts((current) => current.map((item) => item.id === post.id ? { ...item, likes: post.likes, liked: post.liked } : item));
+      setLikedPostIds((current) => post.liked ? [...new Set([...current, post.id])] : current.filter((id) => id !== post.id));
+      setRemoteError(error instanceof Error ? error.message : "Could not update the like.");
+    }
+  };
+  const openComments = async (postId: string) => {
+    setCommenting(postId);
+    if (postId.startsWith("local-") || commentsByPost[postId]) return;
+    setCommentLoading(postId);
+    try {
+      const page = await loadTwittComments(postId);
+      const items = page.items;
+      const profiles = await Promise.all(items.map(async (comment) => [comment.uid, await getUserProfile(comment.uid)] as const));
+      setCommentNames((current) => ({ ...current, ...Object.fromEntries(profiles.map(([uid, profile]) => [uid, profile?.username || "Anonymous"])) }));
+      setCommentsByPost((current) => ({ ...current, [postId]: items }));
+      setCommentCursors((current) => ({ ...current, [postId]: page.cursor }));
+      setCommentMore((current) => ({ ...current, [postId]: page.hasMore }));
+    } finally { setCommentLoading(null); }
+  };
+  const loadMoreComments = async (postId: string) => {
+    const cursor = commentCursors[postId];
+    if (!cursor || commentLoading) return;
+    setCommentLoading(postId);
+    try {
+      const page = await loadTwittComments(postId, cursor);
+      const items = page.items;
+      const profiles = await Promise.all(items.map(async (comment) => [comment.uid, await getUserProfile(comment.uid)] as const));
+      setCommentNames((current) => ({ ...current, ...Object.fromEntries(profiles.map(([uid, profile]) => [uid, profile?.username || "Anonymous"])) }));
+      setCommentsByPost((current) => ({ ...current, [postId]: [...(current[postId] || []), ...items] }));
+      setCommentCursors((current) => ({ ...current, [postId]: page.cursor }));
+      setCommentMore((current) => ({ ...current, [postId]: page.hasMore }));
+    } finally { setCommentLoading(null); }
+  };
+  const submitComment = async (post: TwittPreview, body: string, file?: File | null) => {
+    setCommentError("");
+    const uid = auth?.currentUser?.uid || 'you';
+    const localId = `local-comment-${Date.now()}`;
+    const optimisticComment = { id: localId, uid, body, createdAt: { toMillis: () => Date.now() } };
+    setCommentsByPost((current) => ({ ...current, [post.id]: [...(current[post.id] || []), optimisticComment] }));
+    setPosts((current) => current.map((item) => item.id === post.id ? { ...item, comments: item.comments + 1 } : item));
+    try {
+      if (uid !== 'you' && firebaseReady && !post.id.startsWith('local-')) {
+        let attachment: TwittAttachment | null = null;
+        if (file) {
+          const uploaded = await StorageManager.upload(file, { ownerId: uid, originalName: file.name, mimeType: file.type, sizeBytes: file.size, twittId: post.id, scope: 'twitt' });
+          attachment = { name: uploaded.originalName, url: uploaded.url, storageKey: uploaded.storageKey, type: uploaded.mimeType, size: uploaded.sizeBytes };
+        }
+        await createTwittComment(post.id, uid, body || '📎 Attachment', attachment);
+        setCommentsByPost((current) => ({ ...current, [post.id]: (current[post.id] || []).filter((comment) => comment.id !== localId) }));
+      }
+      const profile = uid !== 'you' ? await getUserProfile(uid) : null;
+      setCommentNames((current) => ({ ...current, [uid]: profile?.username || current[uid] || "Anonymous" }));
+    } catch (error) {
+      setCommentsByPost((current) => ({ ...current, [post.id]: (current[post.id] || []).filter((comment) => comment.id !== localId) }));
+      setPosts((current) => current.map((item) => item.id === post.id ? { ...item, comments: Math.max(0, item.comments - 1) } : item));
+      setCommentError(error instanceof Error ? error.message : "Could not add that comment or attachment.");
+    }
+  };
+  useEffect(() => {
+    const onCommentCreated = (event: Event) => {
+      const detail = (event as CustomEvent<{ twittId?: string; id?: string; uid?: string; body?: string; attachment?: TwittAttachment | null }>).detail;
+      if (!detail?.twittId || !detail.id || !detail.uid || !detail.body) return;
+      void getUserProfile(detail.uid).then((profile) => {
+        setCommentNames((names) => ({ ...names, [detail.uid!]: profile?.username || "Anonymous" }));
+        setCommentsByPost((current) => {
+          const comments = current[detail.twittId!] || [];
+          if (comments.some((comment) => comment.id === detail.id)) return current;
+          return { ...current, [detail.twittId!]: [...comments, { id: detail.id!, uid: detail.uid!, body: detail.body!, attachment: detail.attachment || null, likes: 0, createdAt: { toMillis: () => Date.now() } }] };
+        });
+      });
+    };
+    window.addEventListener('cochat-comment-created', onCommentCreated);
+    return () => window.removeEventListener('cochat-comment-created', onCommentCreated);
+  }, []);
+  const dismissPost = async (post: TwittPreview) => {
+    setPostMenu(null);
+    setHiddenPosts((current) => current.includes(post.id) ? current : [...current, post.id]);
+    try {
+      const uid = auth?.currentUser?.uid;
+      if (uid && firebaseReady && !post.id.startsWith('local-')) await hideTwitt(post.id, uid);
+    } catch (error) {
+      setHiddenPosts((current) => current.filter((id) => id !== post.id));
+      setRemoteError(error instanceof Error ? error.message : 'Could not hide this Twitt.');
+    }
+  };
+  const removePost = async (post: TwittPreview) => {
+    if (!window.confirm('Delete this Twitt permanently? Its comments and reactions will also be removed.')) return;
+    if (busyDeletes.includes(post.id)) return;
+    const before = posts;
+    setBusyDeletes((current) => [...current, post.id]);
+    setPostMenu(null);
+    setPosts((current) => current.filter((item) => item.id !== post.id));
+    try {
+      const uid = auth?.currentUser?.uid;
+      if (!uid || !firebaseReady || post.id.startsWith('local-')) throw new Error('Sign in again to delete this Twitt.');
+      await deleteTwitt(post.id, uid);
+    } catch (error) {
+      setPosts(before);
+      setRemoteError(error instanceof Error ? error.message : 'Could not delete this Twitt.');
+    } finally {
+      setBusyDeletes((current) => current.filter((id) => id !== post.id));
+    }
+  };
+  const likeComment = async (postId: string, comment: TwittComment) => {
+    const nextLiked = !comment.liked;
+    setLikedCommentIds((current) => nextLiked ? [...new Set([...current, comment.id])] : current.filter((id) => id !== comment.id));
+    setCommentsByPost((current) => ({ ...current, [postId]: (current[postId] || []).map((item) => item.id === comment.id ? { ...item, liked: nextLiked, likes: Math.max(0, (item.likes || 0) + (nextLiked ? 1 : -1)) } : item) }));
+    try {
+      const uid = auth?.currentUser?.uid;
+      if (!uid || !firebaseReady || comment.id.startsWith('local-comment-')) throw new Error('Sign in again to like a comment.');
+      await toggleTwittCommentLike(postId, comment.id, uid, nextLiked);
+    } catch (error) {
+      setCommentsByPost((current) => ({ ...current, [postId]: (current[postId] || []).map((item) => item.id === comment.id ? { ...item, liked: comment.liked, likes: comment.likes || 0 } : item) }));
+      setRemoteError(error instanceof Error ? error.message : 'Could not update the comment like.');
+    }
+  };
+  const removeComment = async (post: TwittPreview, comment: TwittComment) => {
+    if (!window.confirm('Delete this comment?')) return;
+    const previous = commentsByPost[post.id] || [];
+    setCommentsByPost((current) => ({ ...current, [post.id]: previous.filter((item) => item.id !== comment.id) }));
+    setPosts((current) => current.map((item) => item.id === post.id ? { ...item, comments: Math.max(0, item.comments - 1) } : item));
+    try {
+      const uid = auth?.currentUser?.uid;
+      if (!uid || !firebaseReady || comment.id.startsWith('local-comment-')) throw new Error('Sign in again to delete this comment.');
+      await deleteTwittComment(post.id, comment.id, uid);
+    } catch (error) {
+      setCommentsByPost((current) => ({ ...current, [post.id]: previous }));
+      setPosts((current) => current.map((item) => item.id === post.id ? { ...item, comments: item.comments + 1 } : item));
+      setRemoteError(error instanceof Error ? error.message : 'Could not delete this comment.');
+    }
+  };
+  const openAuthorProfile = async (authorUid: string) => {
+    const resolvedUid = authorUid === "your_profile" ? (auth?.currentUser?.uid || authorUid) : authorUid;
+    const cached = authorProfiles[resolvedUid];
+    if (cached?.hideTwittIdentity && resolvedUid !== auth?.currentUser?.uid) return;
+    if (cached) { setFocusedAuthor(cached); return; }
+    const profile = await getUserProfile(resolvedUid).catch(() => null);
+    if (profile) {
+      setAuthorProfiles((current) => ({ ...current, [resolvedUid]: profile }));
+      setFocusedAuthor(profile);
+    } else {
+      setRemoteError("Could not load this profile. Please try again.");
+    }
+  };
+  const copyAuthorProfile = async (profile: UserProfile) => {
+    const value = profile.username;
+    try { await navigator.clipboard.writeText(value); setRemoteError(`${value} copied to clipboard.`); }
+    catch { setRemoteError(`Username: ${value}`); }
+  };
+  const shareAuthorProfile = async (profile: UserProfile) => {
+    const handle = `@${profile.username}`;
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: `${profile.displayName} on Co-Chat`, text: `${profile.displayName} · ${handle}`, url: window.location.href });
+        return;
+      }
+      await navigator.clipboard.writeText(`${profile.displayName} · ${handle}`);
+      setRemoteError("Profile link copied to clipboard.");
+    } catch { /* sharing can be dismissed by the user */ }
+  };
+  const blockFocusedAuthor = async () => {
+    const viewerUid = auth?.currentUser?.uid;
+    if (!viewerUid || !focusedAuthor || viewerUid === focusedAuthor.uid) return;
+    if (!window.confirm(`Block @${focusedAuthor.username}? They will no longer appear in your people lists.`)) return;
+    try {
+      await blockUser(viewerUid, focusedAuthor.uid);
+      setPosts((current) => current.filter((post) => post.authorUid !== focusedAuthor.uid));
+      setFocusedAuthor(null);
+      setRemoteError(`@${focusedAuthor.username} has been blocked.`);
+    } catch (error) { setRemoteError(error instanceof Error ? error.message : "Could not block this person."); }
+  };
+  const tagSuggestions = [...new Set(["jee", "neet", "upsc", "ssc", "gate", "cat", "study", "boards", ...posts.map((post) => post.community)])].slice(0, 12);
+  const popularTags = Object.entries(posts.reduce<Record<string, number>>((counts, post) => ({ ...counts, [post.community]: (counts[post.community] || 0) + 1 }), {})).sort(([, a], [, b]) => b - a).slice(0, 6).map(([tag]) => tag);
+  const communityLabel = community === "all" ? "All tags" : `#${community}`;
+  const createTwitt = async () => {
+    if ((!draft.trim() && !draftFile) || publishing) return;
+    setPublishing(true);
+    const body = draft.trim();
+    setPublishError("");
+    const uid = auth?.currentUser?.uid;
+    let id = `local-${Date.now()}`;
+    let attachment: TwittAttachment | null = null;
+    const uploadedStorageKeys: string[] = [];
+    if (uid && firebaseReady) {
+      try {
+        if (draftFile) {
+          // Upload against a temporary media scope first. The returned attachment is
+          // then sent together with the caption in the create request, so the post
+          // cannot become caption-only when the follow-up attach call is missed.
+          const mediaScopeId = typeof crypto.randomUUID === "function" ? crypto.randomUUID() : `draft-${Date.now()}`;
+          const uploaded = await StorageManager.upload(draftFile, { ownerId: uid, originalName: draftFile.name, mimeType: draftFile.type, sizeBytes: draftFile.size, twittId: mediaScopeId, scope: 'twitt' });
+          uploadedStorageKeys.push(uploaded.storageKey);
+          attachment = { name: uploaded.originalName, url: uploaded.url, storageKey: uploaded.storageKey, type: uploaded.mimeType, size: uploaded.sizeBytes };
+        }
+        id = await createRemoteTwitt(uid, body, feedType === "social" ? "public" : draftCommunity, attachment, feedType);
+      } catch (error) {
+        if (!id.startsWith('local-')) await deleteTwitt(id, uid).catch(() => undefined);
+        await Promise.all(uploadedStorageKeys.map((storageKey) => StorageManager.delete(storageKey).catch(() => undefined)));
+        setPublishError(error instanceof Error ? error.message : "Could not publish this Twitt. Please try again.");
+        setPublishing(false);
+        return;
+      }
+    }
+    const profile = uid ? await getUserProfile(uid).catch(() => null) : null;
+    const post: TwittPreview = { id, authorUid: uid || "your_profile", author: "You", handle: profile?.username || "", avatar: DEFAULT_AVATAR_URL, body, likes: 0, comments: 0, views: "0", age: "now", createdAt: Date.now(), community: feedType === "social" ? "public" : draftCommunity, feedType, expiresAt: feedType === "social" ? new Date(Date.now() + 24 * 3_600_000).toISOString() : null, attachment };
+    setPosts((current) => [post, ...current]);
+    setDraft(""); setDraftFile(null); setCameraDataUrl(null); setCameraFilter("none");
+    setComposerOpen(false);
+    setCommunity(feedType === "social" ? "all" : draftCommunity);
+    setVisible(20);
+    setPublishing(false);
+  };
+  return <div className={`twitt-feed feed-type-${feedType}${authorLoading ? " authors-loading" : ""}`}>
+    <div className="discovery-mode-tabs compact-mode-switch" role="tablist" aria-label="Discovery mode"><button type="button" role="tab" aria-selected={feedType === "study"} className={feedType === "study" ? "active" : ""} onClick={() => { setFeedType("study"); setCommunity("all"); setVisible(20); }}><span aria-hidden="true">◷</span> Study <small>Questions & answers · 7 days</small></button><button type="button" role="tab" aria-selected={feedType === "social"} className={feedType === "social" ? "active" : ""} onClick={() => { setFeedType("social"); setCommunity("all"); setVisible(20); }}><span aria-hidden="true">✦</span> Social <small>24-hour moments</small></button></div>
+    <button className="discover-compose-fab" type="button" aria-label={feedType === "study" ? "Ask a study doubt" : "Create a social post"} title={feedType === "study" ? "Ask a study doubt" : "Create a social post"} onClick={() => setComposerOpen(true)}><span aria-hidden="true">＋</span><small>{feedType === "study" ? "Ask" : "Post"}</small></button>
+    {composerOpen && <section className="twitt-composer"><div className="composer-heading"><strong>{feedType === "study" ? "Ask your study community" : "Share with friends"}</strong><button className="icon" type="button" disabled={publishing || cameraBusy} onClick={() => setComposerOpen(false)}>×</button></div><textarea disabled={publishing || cameraBusy} value={draft} onChange={(event) => setDraft(event.target.value.slice(0, 280))} placeholder={feedType === "study" ? "Describe your doubt or study win…" : "What is happening today? (expires in 24 hours)"} autoFocus /><div className="twitt-media-actions"><button className="twitt-camera-button" type="button" disabled={publishing || cameraBusy} onClick={() => void captureCameraPhoto()}>📸 {cameraBusy ? "Opening camera…" : "Open camera"}</button><label className="twitt-media-picker"><MediaIcon /> Add photo/PDF (max 5 MB)<input disabled={publishing || cameraBusy} type="file" accept="image/jpeg,image/png,image/webp,image/gif,application/pdf" onChange={(event) => { setCameraDataUrl(null); setDraftFile(event.target.files?.[0] || null); }} /></label></div>{cameraDataUrl && <div className="camera-filter-picker"><div className="camera-filter-heading"><strong>Camera studio</strong><small>Normal first · choose a look before posting</small></div><div className="camera-filter-list">{cameraFilterOptions.map(({ id, label, icon }) => <button key={id} type="button" className={cameraFilter === id ? "active" : ""} disabled={publishing || cameraBusy} onClick={() => setCameraFilter(id)}><span>{icon}</span>{label}</button>)}</div><img className={`camera-capture-preview filter-${cameraFilter}`} style={{ filter: cameraFilterCss[cameraFilter] }} src={cameraDataUrl} alt="Captured moment preview" /></div>}<small className="twitt-safety-note">Explicit porn content is not allowed. Normal photos are welcome.</small>{draftFile && <small className="twitt-file-name">{draftFile.name}</small>}{publishError && <p className="twitt-sync-error">{publishError}</p>}<div className="composer-footer">{feedType === "study" ? <div className="tag-input"><span>#</span><input disabled={publishing} list="twitt-tag-suggestions" value={draftCommunity} onChange={(event) => setDraftCommunity(event.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""))} placeholder="Add a study tag (required)" /><datalist id="twitt-tag-suggestions">{tagSuggestions.map((tag) => <option value={tag} key={tag} />)}</datalist></div> : <span className="social-expiry-note">Visible for 24 hours</span>}<span>{draft.length}/280</span><button className="primary compact" type="button" disabled={(!draft.trim() && !draftFile) || (feedType === "study" && !draftCommunity) || publishing || cameraBusy} onClick={() => void createTwitt()}>{publishing ? "◌ Posting…" : "Post"}</button></div></section>}
+    {focusedAuthor && createPortal(<div className="profile-sheet-backdrop twitt-author-profile-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setFocusedAuthor(null); }}><section className="person-profile profile-sheet twitt-author-profile" role="dialog" aria-modal="true" aria-label="Twitt author profile" onMouseDown={(event) => event.stopPropagation()}><button className="icon close-profile" type="button" aria-label="Close profile" onClick={() => setFocusedAuthor(null)}>×</button><div className="twitt-profile-hero"><div className="twitt-profile-avatar-wrap"><Avatar profile={focusedAuthor} className="avatar large profile-sheet-avatar" /><span className={`twitt-profile-presence ${focusedAuthor.activeStatus === false ? "offline" : ""}`} /></div><span className="settings-eyebrow">TWITT AUTHOR · CO-CHAT PROFILE</span><h3>{focusedAuthor.displayName}{isVerified(focusedAuthor.uid) && <VerifiedTick />}</h3><p>@{focusedAuthor.username}</p><span className="twitt-profile-status"><i />{focusedAuthor.activeStatus === false ? "Offline" : "Available to chat"}</span></div><div className="public-profile-atmosphere twitt-author-atmosphere"><div className="public-profile-level"><span className="profile-rank-badge">✦</span><div><b>{focusedAuthor.profileComplete ? "Profile ready" : "New member"}</b><small>Public identity · {focusedAuthor.activeStatus === false ? "last seen privately" : "active now"}</small></div><span className="profile-online-pill">{focusedAuthor.activeStatus === false ? "Offline" : "Available"}</span></div><div className="public-profile-stats"><span><b>{focusedAuthor.profileComplete ? "Ready" : "New"}</b><small>profile status</small></span><span><b>{focusedAuthor.activeStatus === false ? "Away" : "Live"}</b><small>presence</small></span><span><b>Public</b><small>twitt identity</small></span></div><div className="public-profile-achievements"><small>AUTHOR SIGNALS</small><div><span>✦ Profile complete</span><span>◇ Community ready</span></div></div></div><div className="twitt-profile-bio"><span className="twitt-profile-bio-label">ABOUT THIS AUTHOR</span><strong>{focusedAuthor.bio?.trim() || "No bio added yet. Explore their public Twitts to learn more."}</strong><small>Seen from a public Twitt · identity details stay synced.</small></div><div className="profile-actions twitt-profile-actions"><button className="secondary" type="button" onClick={() => void shareAuthorProfile(focusedAuthor)}>Share profile</button><button className="secondary" type="button" onClick={() => void copyAuthorProfile(focusedAuthor)}>Copy handle</button><button className="secondary danger-outline" type="button" onClick={() => void blockFocusedAuthor()}>Block author</button></div></section></div>, document.body)}
+    <CameraStudio isOpen={cameraOpen} onClose={() => setCameraOpen(false)} onSave={saveCameraCapture} onCapture={({ dataUrl, filter, intensity }) => { setCameraDataUrl(dataUrl); setCameraFilter(filter); setCameraIntensity(intensity); setFeedType("social"); setComposerOpen(true); }} onSneak={({ dataUrl }) => void prepareFeedSneak(dataUrl)} onError={setPublishError} onNativeFallback={() => void captureNativeCamera()} />
+    {feedSneakOpen && <div className="sneak-picker-backdrop" role="presentation"><section className="sneak-picker" role="dialog" aria-modal="true" aria-label="Choose friends for Sneak"><header><div><strong>Send Sneak</strong><small>Choose one or more friends</small></div><button type="button" className="sneak-picker-close" onClick={() => setFeedSneakOpen(false)}>×</button></header><img className="sneak-picker-preview" src={feedSneakDataUrl || undefined} alt="Sneak preview" /><input className="sneak-picker-search" value={feedSneakSearch} onChange={(event) => setFeedSneakSearch(event.target.value)} placeholder="Search friends" /><div className="sneak-picker-list">{feedSneakFriends.filter((friend) => `${friend.displayName} ${friend.username}`.toLowerCase().includes(feedSneakSearch.toLowerCase())).map((friend) => { const checked = feedSneakSelected.includes(friend.uid); return <button type="button" className={`sneak-friend-row ${checked ? "selected" : ""}`} key={friend.uid} onClick={() => setFeedSneakSelected((items) => checked ? items.filter((id) => id !== friend.uid) : [...items, friend.uid])}><Avatar name={friend.displayName} photoURL={friend.photoURL} className="avatar" /><span><b>{friend.displayName}</b><small>@{friend.username || "friend"}</small></span><i>{checked ? "✓" : ""}</i></button>; })}{!feedSneakFriends.length && <small className="sneak-picker-empty">No accepted friends yet.</small>}</div><footer><span>{feedSneakSelected.length} selected</span><button type="button" className="camera-studio-primary" disabled={!feedSneakSelected.length || feedSneakBusy} onClick={() => void sendFeedSneak()}>{feedSneakBusy ? "Sending…" : "Send Sneak"}</button></footer></section></div>}
+    {feedType === "study" && <div className="community-filter" aria-label="Twitt tag filter">{[["all", "All"], ...popularTags.map((tag) => [tag, `#${tag}`] as const)].map(([id, label]) => <button key={id} className={community === id ? "active" : ""} onClick={() => { setCommunity(id); setVisible(3); }}>{label}</button>)}</div>}
+    {remoteError && <div className="notice twitt-sync-error">{remoteError}<button className="secondary compact" type="button" onClick={() => window.location.reload()}>Retry</button></div>}
+    {commentError && <div className="notice twitt-sync-error">{commentError}<button className="icon" type="button" aria-label="Dismiss comment error" onClick={() => setCommentError("")}>×</button></div>}
+      {remoteLoading && !posts.length && <section className="twitt-premium-loader" role="status" aria-live="polite" aria-label="Loading Twitts"><div className="twitt-loader-orbit" aria-hidden="true"><span className="twitt-loader-ring ring-a"/><span className="twitt-loader-ring ring-b"/><span className="twitt-loader-star star-a">✦</span><span className="twitt-loader-star star-b">·</span><div className="twitt-loader-core">✦</div></div><span className="twitt-loader-kicker">CO-CHAT DISCOVERY</span><strong>Curating your moments</strong><small>Finding fresh ideas, friends, and conversations…</small><div className="twitt-loader-progress" aria-hidden="true"><i/></div><div className="twitt-loader-pulse" aria-hidden="true"><span/> <span/> <span/></div></section>}
+      {remoteLoading && posts.length > 0 && <div className="twitt-feed-loading" role="status" aria-live="polite"><span className="loading-spinner" /> Syncing new moments…</div>}
+    <div className="twitt-list">{filtered.slice(0, visible).map((post) => { const anonymousPost = post.author === "Anonymous"; const rawAuthorPhoto = post.authorProfile?.photoURL || authorProfiles[post.authorUid]?.photoURL || post.avatar || ""; const authorPhoto = anonymousPost ? DEFAULT_AVATAR_URL : usablePhotoURL(rawAuthorPhoto) || DEFAULT_AVATAR_URL; const anonymousAvatar = anonymousPost || !usablePhotoURL(rawAuthorPhoto); return <article className="twitt-card" key={post.id}><div className="twitt-head"><button className={`avatar twitt-author-avatar${anonymousAvatar ? " is-anonymous" : ""}`} type="button" aria-label={anonymousAvatar && post.author === "Anonymous" ? "Open Anonymous profile" : `Open ${post.author}'s profile`} onClick={() => void openAuthorProfile(post.authorUid)}><img loading="lazy" decoding="async" src={authorPhoto || DEFAULT_AVATAR_URL} alt="" onError={(event) => { event.currentTarget.onerror = null; event.currentTarget.src = DEFAULT_AVATAR_URL; event.currentTarget.closest(".twitt-author-avatar")?.classList.add("is-anonymous"); }} /></button><div><strong>{post.author}</strong>{isVerified(post.authorUid) && <VerifiedTick />}<small>{post.handle ? `@${post.handle} · ` : ""}{post.age} · {post.community.toUpperCase()}</small></div><div className="twitt-actions"><button className="icon" aria-label="Twitt options" aria-expanded={postMenu === post.id} onClick={() => setPostMenu(postMenu === post.id ? null : post.id)}>•••</button>{postMenu === post.id && <div className="twitt-menu">{post.authorUid === auth?.currentUser?.uid ? <button type="button" className="danger" onClick={() => void removePost(post)}>Delete Twitt</button> : <button type="button" onClick={() => void dismissPost(post)}>Not interested</button>}<button type="button" onClick={() => setPostMenu(null)}>Cancel</button></div>}</div></div><p>{post.body}</p>{post.attachment && (post.attachment.type.startsWith("image/") ? <a className="twitt-media-preview" href={post.attachment.url} target="_blank" rel="noreferrer" download={post.attachment.name}><img loading="lazy" decoding="async" src={post.attachment.url} alt={post.attachment.name} /><span>Open / save image</span></a> : <a className="twitt-attachment" href={post.attachment.url} target="_blank" rel="noreferrer" download={post.attachment.name}>📄 {post.attachment.name} · Open / save</a>)}<div className="twitt-meta"><button className={post.liked ? "liked" : ""} aria-label={post.liked ? "Unlike Twitt" : "Like Twitt"} onClick={() => void handleLike(post)}><span className="like-icon" aria-hidden="true">♡</span> {post.likes}</button><button className="comment-action" aria-label="Open comments" onClick={() => void openComments(post.id)}><span className="comment-icon" aria-hidden="true" /> {post.comments}</button><span>◉ {post.views}</span><button className={following.includes(post.community) ? "followed" : ""} onClick={() => setFollowing((current) => current.includes(post.community) ? current.filter((id) => id !== post.community) : [...current, post.community])}>{following.includes(post.community) ? "Following" : `Follow ${post.community.toUpperCase()}`}</button></div></article>; })}</div>
+    {commenting && posts.find((post) => post.id === commenting) && <CommentSheet post={posts.find((post) => post.id === commenting)!} comments={commentsByPost[commenting] || []} loading={commentLoading === commenting} hasMore={Boolean(commentMore[commenting])} names={commentNames} currentUid={auth?.currentUser?.uid} onClose={() => setCommenting(null)} onLoadMore={() => void loadMoreComments(commenting)} onSubmit={(body, file) => void submitComment(posts.find((post) => post.id === commenting)!, body, file)} onLike={(comment) => void likeComment(commenting, comment)} onDelete={(comment) => void removeComment(posts.find((post) => post.id === commenting)!, comment)} />}
+    {!remoteLoading && !remoteError && !filtered.length && <div className="empty-state">No Twitts in {communityLabel} yet. Be the first to share something useful.</div>}
+    {(visible < filtered.length || remoteHasMore) && <button className="load-more" type="button" onClick={() => void loadMore()} disabled={remoteLoading}>{remoteLoading ? "Loading Twitts…" : "Load 20 more Twitts"}</button>}
+    {feedType === "social" && <p className="feed-note">Social posts expire after 24 hours. Friends appear first, and posts you have seen move to the bottom.</p>}
+  </div>;
+}
+
+function UsernameSetup({
+  user,
+  onComplete,
+}: {
+  user: User;
+  onComplete: (username: string, displayName: string) => void;
+}) {
+  const [username, setUsername] = useState("");
+  const [displayName, setDisplayName] = useState(user.displayName || "");
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    setSaving(true);
+    setError("");
+    try {
+      await saveProfile(user.uid, {
+        displayName,
+        username,
+        bio: "",
+        notificationsEnabled: true,
+        discoverable: true,
+      });
+      onComplete(username.trim().toLowerCase(), displayName.trim());
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not save your profile.");
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <main className="auth">
+      <section className="auth-card">
+        <div className="brand-mark">C</div>
+        <h1>Set up your profile</h1>
+        <p>Choose a unique username so people can find you on Co-Chat.</p>
+        <form onSubmit={submit}>
+          <label>
+            Display name
+            <input
+              value={displayName}
+              onChange={(e) => setDisplayName(e.target.value)}
+              placeholder="Your name"
+              required
+            />
+          </label>
+          <label>
+            Username
+            <input
+              value={username}
+              onChange={(e) =>
+                setUsername(
+                  e.target.value.replace(/[^a-zA-Z0-9_]/g, "").toLowerCase(),
+                )
+              }
+              placeholder="your_username"
+              minLength={3}
+              maxLength={24}
+              pattern="[a-z0-9_]+"
+              required
+            />
+          </label>
+          {error && <p className="error-text">{error}</p>}
+          <button type="submit" className="primary" disabled={saving}>
+            {saving ? "Saving…" : "Continue"}
+          </button>
+        </form>
+      </section>
+    </main>
+  );
+}
+
+export default function App() {
+  const isNativeAndroid = Capacitor.isNativePlatform() && Capacitor.getPlatform() === "android";
+  const [user, setUser] = useState<User | null>(null);
+  const [preview, setPreview] = useState(false);
+  const [loading, setLoading] = useState(firebaseReady);
+  const [showVoiceCall, setShowVoiceCall] = useState(false);
+  const [voiceRole, setVoiceRole] = useState<"caller" | "callee">("caller");
+  const [voiceTarget, setVoiceTarget] = useState<{ id: string; name: string; photoURL?: string; memberIds: string[] } | null>(null);
+  const [page, setPage] = useState("chats");
+  const [discoverCommunity, setDiscoverCommunity] = useState<"all" | "jee" | "neet" | "study" | "public">("all");
+  // Never seed the signed-in UI with demo conversations. Render skeletons
+  // while the backend is loading, then show the real empty state if needed.
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const conversationsRef = useRef<Conversation[]>([]);
+  const [conversationsLoading, setConversationsLoading] = useState(true);
+  useEffect(() => { conversationsRef.current = conversations; }, [conversations]);
+  const [selected, setSelected] = useState<Conversation | null>(null);
+  const swipeStart = useRef<{ x: number; y: number } | null>(null);
+  const swipePages = ["chats", "study", "communities", "discover", "settings"] as const;
+  const handleChatTouchStart = (event: ReactTouchEvent<HTMLElement>) => {
+    if (!isNativeAndroid) return;
+    const target = event.target as HTMLElement | null;
+    if (target?.closest("button,a,input,textarea,select,[contenteditable='true'],[role='dialog']")) {
+      swipeStart.current = null;
+      return;
+    }
+    const touch = event.changedTouches[0];
+    swipeStart.current = { x: touch.clientX, y: touch.clientY };
+  };
+  const handleChatTouchEnd = (event: ReactTouchEvent<HTMLElement>) => {
+    const start = swipeStart.current;
+    swipeStart.current = null;
+    if (!isNativeAndroid || !start || !selected) return;
+    const touch = event.changedTouches[0];
+    const dx = touch.clientX - start.x;
+    const dy = touch.clientY - start.y;
+    if (Math.abs(dx) <= 72 || Math.abs(dx) <= Math.abs(dy) * 1.35) return;
+    if (selected) {
+      if (dx > 0) setSelected(null);
+      return;
+    }
+    const currentIndex = swipePages.indexOf(page as typeof swipePages[number]);
+    if (currentIndex < 0) return;
+    const nextIndex = currentIndex + (dx < 0 ? 1 : -1);
+    const nextPage = swipePages[nextIndex];
+    if (nextPage) setPage(nextPage);
+  };
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const messagesViewportRef = useRef<HTMLElement | null>(null);
+  const stickMessagesToBottom = useRef(true);
+  const previousConversationId = useRef<string | null>(null);
+  const [conversationOpening, setConversationOpening] = useState(false);
+  const conversationOpeningAt = useRef(0);
+  const [encryptionNoticeVisible, setEncryptionNoticeVisible] = useState(true);
+  const [sendingMessage, setSendingMessage] = useState(false);
+  const pendingMessages = useRef<Record<string, ChatMessage>>({});
+  const [text, setText] = useState("");
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [imagePreview, setImagePreview] = useState<ChatAttachment | null>(null);
+  const [sneakCameraOpen, setSneakCameraOpen] = useState(false);
+  const [sneakPickerOpen, setSneakPickerOpen] = useState(false);
+  const [sneakDraftDataUrl, setSneakDraftDataUrl] = useState<string | null>(null);
+  const [sneakRecipientIds, setSneakRecipientIds] = useState<string[]>([]);
+  const [sneakFriendSearch, setSneakFriendSearch] = useState("");
+  const [sneakViewer, setSneakViewer] = useState<{ url: string; messageId: string } | null>(null);
+  const [sneakBusy, setSneakBusy] = useState(false);
+  const [search, setSearch] = useState("");
+  const [error, setError] = useState("");
+  const [showNew, setShowNew] = useState(false);
+  const [verificationSent, setVerificationSent] = useState(false);
+  const [, setVerificationRefresh] = useState(0);
+  const [verificationCooldown, setVerificationCooldown] = useState(0);
+  const [showGroup, setShowGroup] = useState(false);
+  const [needsUsername, setNeedsUsername] = useState(false);
+  const [senderNames, setSenderNames] = useState<Record<string, string>>({});
+  const [replyTarget, setReplyTarget] = useState<ChatMessage | null>(null);
+  const [stories, setStories] = useState<Story[]>([]);
+  const [incomingCall, setIncomingCall] = useState<CallRecord | null>(null);
+  const [groupCall, setGroupCall] = useState<{ id: string; name: string; memberIds: string[]; callerId: string; host: boolean } | null>(null);
+  const [dismissedGroupCallIds, setDismissedGroupCallIds] = useState<string[]>([]);
+  const [activeStory, setActiveStory] = useState<Story | null>(null);
+  const [calls, setCalls] = useState<CallRecord[]>([]);
+  const [storyText, setStoryText] = useState("");
+  const [profileName, setProfileName] = useState("");
+  const [profileUsername, setProfileUsername] = useState("");
+  const [profileBio, setProfileBio] = useState("");
+  const [profilePhotoUrl, setProfilePhotoUrl] = useState("");
+  const [notificationsEnabled, setNotificationsEnabled] = useState(true);
+  const [discoverable, setDiscoverable] = useState(true);
+  const [hideTwittIdentity, setHideTwittIdentity] = useState(false);
+  const [profileSaved, setProfileSaved] = useState(false);
+  const [showFriendRequests, setShowFriendRequests] = useState(false);
+  const [unseenFriendRequestIds, setUnseenFriendRequestIds] = useState<string[]>([]);
+  const [showChatProfile, setShowChatProfile] = useState(false);
+  const [directProfile, setDirectProfile] = useState<UserProfile | null>(null);
+  const [groupPhotoBusy, setGroupPhotoBusy] = useState(false);
+  const [groupMembers, setGroupMembers] = useState<UserProfile[]>([]);
+  const [groupFriends, setGroupFriends] = useState<UserProfile[]>([]);
+  const [friendProfiles, setFriendProfiles] = useState<UserProfile[]>([]);
+  const [groupFriendSearch, setGroupFriendSearch] = useState("");
+  const [showAddMembers, setShowAddMembers] = useState(false);
+  const [groupEditName, setGroupEditName] = useState("");
+  const [messageMenu, setMessageMenu] = useState<ChatMessage | null>(null);
+  const [emojiOpen, setEmojiOpen] = useState(false);
+  const [forwardingMessage, setForwardingMessage] =
+    useState<ChatMessage | null>(null);
+  // Dark is the default, and the account preference is restored across web
+  // refreshes and Android sessions when the user is signed in.
+  const [darkMode, setDarkMode] = useState(() => localStorage.getItem("cochat-theme") !== "light");
+  const [themeLoaded, setThemeLoaded] = useState(false);
+  const [themeLoadedUid, setThemeLoadedUid] = useState<string | null>(null);
+  const [conversationMenu, setConversationMenu] = useState<Conversation | null>(
+    null,
+  );
+  const [deleteTarget, setDeleteTarget] = useState<Conversation | null>(null);
+  const holdTimers = useRef<Record<string, number>>({});
+  const suppressConversationClick = useRef(false);
+  const [incomingCallerName, setIncomingCallerName] =
+    useState("Incoming caller");
+  const [incomingCallerPhoto, setIncomingCallerPhoto] = useState<string | undefined>();
+  const [activeStatus, setActiveStatus] = useState(true);
+  const [blockedUsers, setBlockedUsers] = useState<string[]>([]);
+  const [blockedProfiles, setBlockedProfiles] = useState<UserProfile[]>([]);
+  const [showBlocklist, setShowBlocklist] = useState(false);
+  const [presenceNow, setPresenceNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (!isNativeAndroid) return;
+
+    const handleAndroidBack = (event: Event) => {
+      if (showChatProfile) {
+        setShowChatProfile(false);
+        event.preventDefault();
+        return;
+      }
+      if (messageMenu) {
+        setMessageMenu(null);
+        event.preventDefault();
+        return;
+      }
+      if (emojiOpen) {
+        setEmojiOpen(false);
+        event.preventDefault();
+        return;
+      }
+      if (forwardingMessage) {
+        setForwardingMessage(null);
+        event.preventDefault();
+        return;
+      }
+      if (showNew) {
+        setShowNew(false);
+        event.preventDefault();
+        return;
+      }
+      if (showGroup) {
+        setShowGroup(false);
+        event.preventDefault();
+        return;
+      }
+      if (activeStory) {
+        setActiveStory(null);
+        event.preventDefault();
+        return;
+      }
+      if (selected) {
+        setSelected(null);
+        event.preventDefault();
+        return;
+      }
+      if (page !== "chats") {
+        setPage("chats");
+        event.preventDefault();
+      }
+    };
+
+    window.addEventListener("cochat:back", handleAndroidBack);
+    return () => window.removeEventListener("cochat:back", handleAndroidBack);
+  }, [activeStory, emojiOpen, forwardingMessage, isNativeAndroid, messageMenu, page, selected, showChatProfile, showGroup, showNew]);
+
+  const liveUser = preview
+    ? ({
+        uid: "preview",
+        displayName: "Preview user",
+        email: "preview@cochat.local",
+      } as User)
+    : user;
+  useEffect(() => {
+    if (!blockedUsers.length) { setBlockedProfiles([]); return; }
+    Promise.all(blockedUsers.map((id) => getUserProfile(id))).then((items) => setBlockedProfiles(items.filter((item): item is UserProfile => Boolean(item))));
+  }, [blockedUsers]);
+  const unblockFromSettings = async (profile: UserProfile) => {
+    if (!liveUser || liveUser.uid === "preview") return;
+    try {
+      await unblockUser(liveUser.uid, profile.uid);
+      setBlockedUsers((current) => current.filter((id) => id !== profile.uid));
+    } catch {
+      setError("Could not unblock this person.");
+    }
+  };
+  const resendVerification = async () => {
+    if (!user || verificationCooldown > 0) return;
+    try {
+      await sendEmailVerification(user);
+      setVerificationSent(true);
+      setVerificationCooldown(60);
+    } catch (e) {
+      const code = typeof e === "object" && e !== null && "code" in e ? String((e as { code?: string }).code) : "";
+      if (code === "auth/too-many-requests") setVerificationCooldown(60);
+      setError(code === "auth/too-many-requests" ? "Too many resend attempts. Please wait a minute before trying again." : e instanceof Error ? e.message.replace("Firebase: ", "") : "Could not resend the verification email.");
+    }
+  };
+  useEffect(() => {
+    if (!verificationCooldown) return;
+    const timer = window.setInterval(() => setVerificationCooldown((value) => Math.max(0, value - 1)), 1000);
+    return () => window.clearInterval(timer);
+  }, [verificationCooldown]);
+  useEffect(() => {
+    if (!user || user.emailVerified) return;
+    let active = true;
+    const refreshVerification = async () => {
+      try {
+        await user.reload();
+        if (active && auth?.currentUser) setVerificationRefresh((value) => value + 1);
+      } catch { /* keep the notice until Auth can be refreshed */ }
+    };
+    const timer = window.setInterval(() => void refreshVerification(), 5000);
+    const onVisible = () => { if (document.visibilityState === "visible") void refreshVerification(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => { active = false; window.clearInterval(timer); document.removeEventListener("visibilitychange", onVisible); };
+  }, [user?.uid, user?.emailVerified]);
+  useEffect(() => {
+    if (!auth) {
+      setLoading(false);
+      return;
+    }
+    let settled = false;
+    const finishLoading = () => {
+      if (settled) return;
+      settled = true;
+      setLoading(false);
+    };
+    const unsubscribe = onAuthStateChanged(
+      auth,
+      (next) => {
+        setUser(next);
+        finishLoading();
+      },
+      () => {
+        setError("Could not connect to authentication. Please try again.");
+        finishLoading();
+      },
+    );
+    const timeout = window.setTimeout(finishLoading, 10000);
+    return () => {
+      window.clearTimeout(timeout);
+      unsubscribe();
+    };
+  }, []);
+  useEffect(() => {
+    if (!user || !supabaseReady) return;
+    let cancelled = false;
+    void user
+      .getIdToken()
+      .then((idToken) => verifyFirebaseIdentity(idToken))
+      .catch(() => {
+        if (!cancelled) setError("Signed in, but secure social services are unavailable right now.");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [user]);
+  useEffect(() => {
+    document.documentElement.classList.remove("dark");
+    document.documentElement.dataset.theme = darkMode ? "dark" : "light";
+    localStorage.setItem("cochat-theme", darkMode ? "dark" : "light");
+    if (themeLoaded && themeLoadedUid === liveUser?.uid && liveUser && liveUser.uid !== "preview") {
+      saveTheme(liveUser.uid, darkMode ? "dark" : "light").catch(() => undefined);
+    }
+  }, [darkMode, themeLoaded, themeLoadedUid, liveUser?.uid]);
+  useEffect(() => {
+    if (!liveUser || liveUser.uid === "preview") return;
+    const uid = liveUser.uid;
+    setThemeLoaded(false);
+    setThemeLoadedUid(null);
+    const isNativeAndroid = Capacitor.isNativePlatform() && Capacitor.getPlatform() === "android";
+    ensureUserProfile(uid, {
+      displayName: liveUser.displayName || "",
+      email: liveUser.email || "",
+      photoURL: liveUser.photoURL || "",
+    })
+      .then((profileCreatedOrNeedsSetup) => getUserProfile(uid).then((profile) => ({ profile, profileCreatedOrNeedsSetup })))
+      .then(({ profile, profileCreatedOrNeedsSetup }) => {
+        setProfileName(profile?.displayName || liveUser.displayName || "");
+        setProfileUsername(profile?.username || "");
+        setProfileBio(profile?.bio || "");
+        setProfilePhotoUrl(profile?.photoURL || liveUser.photoURL || "");
+        setProfileSaved(false);
+        if (profile?.theme) setDarkMode(profile.theme === "dark");
+        setThemeLoaded(true);
+        setThemeLoadedUid(uid);
+        // Keep the established web flow unchanged. Android cannot rely on a
+        // fresh WebView's localStorage, so it uses the profile service result:
+        // newly created profiles (or profiles missing a username) see setup;
+        // existing complete profiles go directly to the app.
+        setNeedsUsername(isNativeAndroid ? profileCreatedOrNeedsSetup : !localStorage.getItem(`cochat-username-${uid}`));
+        setNotificationsEnabled(profile?.notificationsEnabled !== false);
+        setDiscoverable(profile?.discoverable !== false);
+        setHideTwittIdentity(profile?.hideTwittIdentity === true);
+        setActiveStatus(profile?.activeStatus !== false);
+        listBlockedUsers(uid)
+          .then((items) => setBlockedUsers(items.map((item) => item.blockedId)))
+          .catch(() => undefined);
+      })
+      .catch(() => setError("Could not load your profile."));
+  }, [liveUser?.uid]);
+  useEffect(() => {
+    if (!liveUser || liveUser.uid === "preview") return;
+    let active = true;
+    let retryTimer: number | null = null;
+    const canRetry = isNativeAndroid || Boolean(import.meta.env.VITE_FIREBASE_VAPID_KEY);
+    const register = () => {
+      void registerFcmNotifications(notificationsEnabled)
+        .then((ready) => {
+          // Registration can be unavailable temporarily while a WebView or
+          // service worker is restoring. Retry locally; this does not call an
+          // Edge Function and avoids requiring a full app restart.
+          const permissionDenied = typeof Notification !== "undefined" && Notification.permission === "denied";
+          if (active && canRetry && !ready && !permissionDenied) retryTimer = window.setTimeout(register, 15000);
+        })
+        .catch(() => {
+          if (active && canRetry) retryTimer = window.setTimeout(register, 15000);
+        });
+    };
+    register();
+    return () => { active = false; if (retryTimer !== null) window.clearTimeout(retryTimer); };
+  }, [liveUser?.uid, notificationsEnabled, isNativeAndroid]);
+  useEffect(() => {
+    if (!liveUser || liveUser.uid === "preview") {
+      setConversationsLoading(false);
+      return;
+    }
+    const uid = liveUser.uid;
+    setConversationsLoading(true);
+    const loadingTimeout = window.setTimeout(() => setConversationsLoading(false), 8000);
+    const stopWatching = watchConversations(uid, (items) => {
+      setConversationsLoading(false);
+      setConversations(items);
+    });
+    return () => { window.clearTimeout(loadingTimeout); stopWatching?.(); };
+  }, [liveUser?.uid, notificationsEnabled]);
+  useEffect(() => {
+    if (!liveUser || liveUser.uid === "preview" || !notificationsEnabled) return;
+    // Supabase Realtime delivers the conversation summary as soon as a send
+    // commits. Notify from that event directly instead of waiting for the
+    // conversation-list API refresh (the list watcher remains responsible for
+    // unread counts and previews). This adds no Edge Function request.
+    return watchIncomingConversationEvents(liveUser.uid, (event) => {
+      const body = event.message === "Sneak" ? "Sent you a Sneak" : event.message;
+      if (!body) return;
+      if (selected?.id === event.conversationId && document.visibilityState === "visible") {
+        void clearConversationNotifications(event.conversationId);
+        return;
+      }
+      // FCM owns delivery while the web app is hidden or closed. Letting the
+      // realtime listener also notify in that state creates duplicate alerts.
+      if (document.visibilityState !== "visible") return;
+      const conversation = conversationsRef.current.find((item) => item.id === event.conversationId);
+      notifyIncomingMessage(conversation?.name || "New Co-Chat message", body, `${event.conversationId}:${event.messageAt}`, event.conversationId);
+    });
+  }, [liveUser?.uid, notificationsEnabled, selected?.id]);
+  useEffect(() => {
+    if (!liveUser || liveUser.uid === "preview") return;
+    return watchFriendRequests(liveUser.uid, (items) => {
+      // The bell represents pending incoming requests.  Keep it in sync with
+      // the live Firestore snapshot so a request is shown immediately, even
+      // after a reload or when an older localStorage value is stale.
+      const incoming = items
+        .filter((item) => item.toUid === liveUser.uid && item.status === "pending")
+        .map((item) => item.id);
+      setUnseenFriendRequestIds(incoming);
+    });
+  }, [liveUser?.uid]);
+  useEffect(() => {
+    const timer = window.setInterval(() => setPresenceNow(Date.now()), 30000);
+    return () => window.clearInterval(timer);
+  }, []);
+  useEffect(() => {
+    setEncryptionNoticeVisible(true);
+    const noticeTimer = window.setTimeout(() => setEncryptionNoticeVisible(false), 2400);
+    return () => window.clearTimeout(noticeTimer);
+  }, [selected?.id]);
+  useEffect(() => {
+    if (
+      !selected ||
+      selected.id.startsWith("preview-") ||
+      !liveUser ||
+      liveUser.uid === "preview"
+    ) {
+      setMessages(
+        selected
+          ? JSON.parse(
+              localStorage.getItem(`cochat-preview-${selected.id}`) || "null",
+            ) ||
+              []
+          : [],
+      );
+      const readyTimer = window.setTimeout(
+        () => setConversationOpening(false),
+        Math.max(0, 300 - (Date.now() - conversationOpeningAt.current)),
+      );
+      return () => window.clearTimeout(readyTimer);
+    }
+    // Give the message request a short window to complete without leaving the
+    // user stuck behind a long security screen. The watcher retries transient
+    // initial-load failures; this is only the final escape hatch for a slow or
+    // offline conversation.
+    const fallbackTimer = window.setTimeout(() => setConversationOpening(false), 3000);
+    const stopWatching = watchMessages(selected.id, liveUser.uid, (items) => {
+      const pending = Object.values(pendingMessages.current).filter((item) => !items.some((saved) => saved.senderId === item.senderId && saved.text === item.text));
+      pendingMessages.current = Object.fromEntries(pending.map((item) => [item.id, item]));
+      setMessages([...items, ...pending].sort((a, b) => (a.createdAt?.toMillis() || Date.now()) - (b.createdAt?.toMillis() || Date.now())));
+      window.setTimeout(
+        () => setConversationOpening(false),
+        Math.max(0, 300 - (Date.now() - conversationOpeningAt.current)),
+      );
+    });
+    return () => {
+      window.clearTimeout(fallbackTimer);
+      stopWatching?.();
+    };
+  }, [selected?.id, liveUser?.uid]);
+  useEffect(() => {
+    if (!liveUser || !messages.length) return;
+    const ids: string[] = [
+      ...new Set<string>(
+        messages
+          .map((item) => item.senderId)
+          .filter((id) => id !== "me" && id !== "them" && id !== liveUser.uid),
+      ),
+    ];
+    Promise.all(
+      ids.map(async (id) => {
+        const profile = await getUserProfile(id);
+        return [id, profile?.displayName || profile?.username || id] as const;
+      }),
+    ).then((items) => setSenderNames((old) => {
+      const next = { ...old };
+      items.forEach(([id, name]) => { next[id] = name; });
+      return next;
+    }));
+  }, [messages, liveUser?.uid]);
+  useEffect(() => {
+    if (!liveUser || liveUser.uid === "preview")
+      return watchStories(setStories);
+  }, [liveUser?.uid]);
+  useEffect(() => {
+    if (!liveUser || liveUser.uid === "preview") return;
+    const uid = liveUser.uid;
+    return watchCalls(uid, setCalls);
+  }, [liveUser?.uid]);
+  useEffect(() => {
+    const call = calls.find(
+      (item) => item.status === "ringing" && item.memberIds.includes(liveUser?.uid || "") && item.callerId !== liveUser?.uid &&
+        (!item.groupId ? item.calleeId === liveUser?.uid : !item.leftIds?.includes(liveUser?.uid || "") && !dismissedGroupCallIds.includes(item.id) && !(groupCall?.id === item.id) && (!item.createdAt || Date.now() - item.createdAt.toMillis() < 60 * 60 * 1000)),
+    );
+    setIncomingCall(call || null);
+  }, [calls, liveUser?.uid, dismissedGroupCallIds, groupCall?.id]);
+  useEffect(() => {
+    if (!incomingCall?.callerId) return;
+    if (incomingCall.groupId) return;
+    getUserProfile(incomingCall.callerId)
+      .then((profile) => { setIncomingCallerName(profile?.displayName || "Incoming caller"); setIncomingCallerPhoto(profile?.photoURL || undefined); })
+      .catch(() => setIncomingCallerName("Incoming caller"));
+  }, [incomingCall?.callerId]);
+  useEffect(() => {
+    if (selected?.id !== previousConversationId.current) {
+      previousConversationId.current = selected?.id || null;
+      stickMessagesToBottom.current = true;
+    }
+    const frame = window.requestAnimationFrame(() => {
+      const container = messagesViewportRef.current;
+      if (!container) return;
+      if (!stickMessagesToBottom.current) return;
+      container.scrollTop = container.scrollHeight;
+      window.setTimeout(() => {
+        if (stickMessagesToBottom.current) container.scrollTop = container.scrollHeight;
+      }, 50);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [messages, selected?.id, conversationOpening]);
+  useEffect(() => {
+    if (!liveUser || liveUser.uid === "preview") return;
+    touchPresence(liveUser.uid, activeStatus).catch(() => undefined);
+    const timer = window.setInterval(
+      () => touchPresence(liveUser.uid, activeStatus).catch(() => undefined),
+      60000,
+    );
+    return () => window.clearInterval(timer);
+  }, [liveUser?.uid, activeStatus]);
+  useEffect(() => {
+    if (!messageMenu && !forwardingMessage) return;
+    const closeMenus = (event: globalThis.MouseEvent) => {
+      const target = event.target as HTMLElement;
+      if (!target.closest(".message-menu,.forward-panel")) {
+        setMessageMenu(null);
+        setForwardingMessage(null);
+      }
+    };
+    document.addEventListener("click", closeMenus);
+    return () => document.removeEventListener("click", closeMenus);
+  }, [messageMenu, forwardingMessage]);
+  useEffect(() => {
+    if (!liveUser || !selected || selected.type !== "group") return;
+    setGroupEditName(selected.name);
+    Promise.all(selected.memberIds.map((id) => getUserProfile(id))).then(
+      (items) =>
+        setGroupMembers(
+          items.filter((item): item is UserProfile => Boolean(item)),
+        ),
+    );
+  }, [showChatProfile, selected?.id, selected?.type]);
+  useEffect(() => {
+    if (!liveUser || !showChatProfile || !selected || selected.type !== "direct") {
+      setDirectProfile(null);
+      return;
+    }
+    const otherUid = selected.memberIds.find((id) => id !== liveUser.uid);
+    if (!otherUid) return;
+    setDirectProfile(selectedFriendProfile || null);
+    void getUserProfile(otherUid).then((profile) => {
+      if (profile) setDirectProfile(profile);
+    }).catch(() => undefined);
+  }, [getUserProfile, liveUser?.uid, selected?.id, selected?.type, showChatProfile]);
+  useEffect(() => {
+    if (!liveUser || !showChatProfile || !selected || selected.type !== "group") return;
+    listFriends(liveUser.uid).then(setGroupFriends).catch(() => setGroupFriends([]));
+  }, [showChatProfile, selected?.id, selected?.type, liveUser?.uid]);
+  useEffect(() => {
+    if (!liveUser || liveUser.uid === "preview") return;
+    let mounted = true;
+    const refreshFriends = () => {
+      if (document.visibilityState === "hidden") return;
+      setPresenceNow(Date.now());
+      void listFriends(liveUser.uid)
+        .then((friends) => {
+          if (mounted) setFriendProfiles(friends);
+        })
+        .catch(() => undefined);
+    };
+    refreshFriends();
+    // Presence is a profile field, so conversation realtime events do not
+    // fire when someone comes online. Refresh while the app is visible so an
+    // open chat header reflects the other person's status promptly.
+    const timer = window.setInterval(refreshFriends, selected?.type === "direct" ? 10000 : 30000);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") refreshFriends();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", refreshFriends);
+    return () => {
+      mounted = false;
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", refreshFriends);
+    };
+  }, [liveUser?.uid, selected?.type]);
+  useEffect(() => {
+    setShowChatProfile(false);
+    setShowAddMembers(false);
+    setGroupFriendSearch("");
+  }, [selected?.id]);
+  useEffect(() => {
+    if (!conversationMenu) return;
+    const closeMenu = (event: globalThis.MouseEvent) => {
+      const target = event.target as HTMLElement;
+      if (!target.closest(".conversation-menu,.chat-row"))
+        setConversationMenu(null);
+    };
+    document.addEventListener("click", closeMenu);
+    return () => document.removeEventListener("click", closeMenu);
+  }, [conversationMenu]);
+  useEffect(() => {
+    const handleViewProfile = (event: globalThis.MouseEvent) => {
+      const target = event.target as HTMLElement;
+      if (
+        target.textContent?.trim() !== "View profile" ||
+        !target.closest(".chat-profile-menu") ||
+        !selected ||
+        !liveUser ||
+        selected.memberIds.length !== 2
+      )
+        return;
+      const otherUid = selected.memberIds.find((id) => id !== liveUser.uid);
+      if (!otherUid) return;
+      event.preventDefault();
+      void getUserProfile(otherUid)
+        .then((profile) =>
+          setError(
+            profile
+              ? `${profile.displayName} · @${profile.username || "user"}${profile.bio ? ` — ${profile.bio}` : ""}`
+              : "Profile unavailable.",
+          ),
+        )
+        .catch(() => setError("Profile unavailable."));
+    };
+    document.addEventListener("click", handleViewProfile, true);
+    return () => document.removeEventListener("click", handleViewProfile, true);
+  }, [selected, liveUser?.uid]);
+  useEffect(() => {
+    if (
+      !selected ||
+      !liveUser ||
+      liveUser.uid === "preview" ||
+      selected.id.startsWith("preview-")
+    )
+      return;
+    markConversationRead(selected.id, liveUser.uid).catch(() => undefined);
+  }, [selected?.id, liveUser?.uid, messages.length]);
+  const visible = useMemo(
+    () =>
+      conversations.filter((item) =>
+        `${item.name} ${item.lastMessage || ""}`
+          .toLowerCase()
+          .includes(search.toLowerCase()),
+      ),
+    [conversations, search],
+  );
+  const onlineUsers = useMemo(() => {
+    if (liveUser?.uid === "preview")
+      return conversations.filter((item) => item.type !== "group" && item.active).slice(0, 8);
+    return friendProfiles
+      .filter((profile) => profile.activeStatus !== false && presenceNow - (profile.lastSeen?.toMillis() || 0) < 90000)
+      .map((profile) => ({
+        id: profile.uid,
+        name: profile.displayName,
+        memberIds: [liveUser?.uid || "", profile.uid],
+        avatar: DEFAULT_AVATAR_URL,
+        photoURL: profile.photoURL || DEFAULT_AVATAR_URL,
+        lastMessage: "",
+        type: "direct" as const,
+        active: true,
+        lastSeen: profile.lastSeen,
+      }))
+      .slice(0, 8);
+  }, [conversations, friendProfiles, liveUser?.uid, presenceNow]);
+  const closeGroupCall = useCallback(() => setGroupCall(null), []);
+  // Keep notification hooks above every conditional return so React sees the
+  // same hook order before and after authentication/profile loading.
+  useEffect(() => {
+    if (!incomingCall) return;
+    void notifyIncomingCall(incomingCall.groupId ? (incomingCall.groupName || "Group call") : incomingCallerName, incomingCall.id, Boolean(incomingCall.groupId));
+  }, [incomingCall?.id, incomingCallerName]);
+  useEffect(() => listenNotificationActions((event) => {
+    if (event.tag?.startsWith("cochat-call-") || event.data?.type === "call") {
+      if (event.action === "answer-call") void acceptIncomingCall();
+      if (event.action === "decline-call") void declineIncomingCall();
+    }
+    if (event.data?.type === "friend-request") {
+      setPage("chats");
+      setShowFriendRequests(true);
+    }
+    if (event.data?.type === "message" && event.action === "open") {
+      const conversationId = typeof event.data.conversationId === "string" ? event.data.conversationId : "";
+      if (conversationId) {
+        void clearConversationNotifications(conversationId);
+        setPage("chats");
+        const conversation = conversationsRef.current.find((item) => item.id === conversationId);
+        if (conversation) openConversation(conversation);
+      }
+    }
+  }), [incomingCall, liveUser, incomingCallerName]);
+  if (loading)
+    return (
+      <main className="app-loading-screen">
+        <div className="app-loading-glow app-loading-glow-one" />
+        <div className="app-loading-glow app-loading-glow-two" />
+        <section className="app-loading-card" aria-label="Loading Co-Chat">
+          <div className="app-loading-brand"><img className="app-loading-logo" src={coChatLogo} alt="Co-Chat" /><strong>Co-Chat</strong></div>
+          <div className="app-loading-orbit"><span className="app-loading-spinner" /><b>✦</b></div>
+          <p className="app-loading-kicker">YOUR SPACE IS SYNCING</p>
+          <h1>Connect to your space</h1>
+          <p className="app-loading-copy">Loading your conversations, study journey, and communities.</p>
+          <div className="app-loading-progress"><span /></div>
+          <small>Securely preparing your Co-Chat experience</small>
+        </section>
+      </main>
+    );
+  if (!liveUser) return <AuthScreen />;
+  if (needsUsername && !preview)
+    return (
+      <UsernameSetup
+        user={liveUser}
+        onComplete={(username, displayName) => {
+          localStorage.setItem(`cochat-username-${liveUser.uid}`, username);
+          setProfileUsername(username);
+          setProfileName(displayName);
+          setNeedsUsername(false);
+        }}
+      />
+    );
+  const send = async (event: FormEvent) => {
+    event.preventDefault();
+    if ((!text.trim() && !selectedFile) || !selected || sendingMessage) return;
+    const value = text.trim();
+    const file = selectedFile;
+    if (value.length > 2000) {
+      setError("Messages must be 2,000 characters or fewer.");
+      return;
+    }
+    setText("");
+    setSelectedFile(null);
+    const target = replyTarget;
+    setReplyTarget(null);
+    if (selected.id.startsWith("preview-")) {
+      setMessages((old) => {
+        const next = [
+          ...old,
+          {
+            id: String(Date.now()),
+            senderId: "me",
+            text: value || file?.name || "",
+            replyTo: target
+              ? { id: target.id, text: target.text, senderId: target.senderId }
+              : null,
+            attachment: file
+              ? {
+                  name: file.name,
+                  url: URL.createObjectURL(file),
+                  type: file.type,
+                  size: file.size,
+                }
+              : null,
+          },
+        ];
+        localStorage.setItem(
+          `cochat-preview-${selected.id}`,
+          JSON.stringify(next),
+        );
+        return next;
+      });
+      return;
+    }
+    const pendingId = `pending-${Date.now()}`;
+    const optimistic: ChatMessage = {
+      id: pendingId,
+      senderId: liveUser.uid,
+      text: value || file?.name || "",
+      createdAt: Timestamp.now(),
+      replyTo: target ? { id: target.id, text: target.text, senderId: target.senderId } : null,
+      attachment: file ? { name: file.name, url: URL.createObjectURL(file), type: file.type, size: file.size } : null,
+    };
+    pendingMessages.current[pendingId] = optimistic;
+    setMessages((old) => [...old, optimistic]);
+    // Keep the chat list responsive while the write/realtime event completes.
+    // The server remains authoritative and will reconcile this preview.
+    setConversations((items) => [...items.map((item) => item.id === selected.id
+      ? { ...item, lastMessage: value || (file ? `📎 ${file.name}` : ''), lastSenderId: liveUser.uid, lastMessageAt: optimistic.createdAt }
+      : item)].sort((a, b) => (b.lastMessageAt?.toMillis() || 0) - (a.lastMessageAt?.toMillis() || 0)));
+    setSendingMessage(true);
+    try {
+      await sendMessage(
+        selected.id,
+        liveUser.uid,
+        value,
+        file || undefined,
+        target,
+      );
+    } catch (e) {
+      delete pendingMessages.current[pendingId];
+      setMessages((old) => old.filter((item) => item.id !== pendingId));
+      setError(
+        e instanceof Error
+          ? e.message
+          : "Message could not be sent. Check your connection.",
+      );
+    } finally {
+      setSendingMessage(false);
+    }
+  };
+  const openConversation = (conversation: Conversation) => {
+    conversationOpeningAt.current = Date.now();
+    setConversationOpening(true);
+    void clearConversationNotifications(conversation.id);
+    pendingMessages.current = {};
+    setConversations((items) => items.map((item) => item.id === conversation.id ? { ...item, unreadCount: 0 } : item));
+    setMessages([]);
+    setSelected(conversation);
+  };
+  const openSneakCamera = () => {
+    if (!selected || selected.type === "group" || selected.memberIds.length !== 2) { setError("Sneaks are only available in one-to-one friend chats."); return; }
+    setSneakCameraOpen(true);
+  };
+  const sendCapturedSneak = async (dataUrl: string) => {
+    if (!selected || selected.type === "group" || selected.memberIds.length !== 2 || sneakBusy) return;
+    const recipientId = selected.memberIds.find((id) => id !== liveUser.uid);
+    if (!recipientId) return;
+    setSneakBusy(true);
+    const pendingId = `pending-sneak-${Date.now()}`;
+    const optimistic: ChatMessage = {
+      id: pendingId,
+      senderId: liveUser.uid,
+      text: "Serving pixels",
+      createdAt: Timestamp.now(),
+      attachment: { name: "sneak.jpg", url: dataUrl, type: "image/jpeg", size: dataUrl.length },
+      sneak: { recipientId, state: "unopened" },
+    };
+    pendingMessages.current[pendingId] = optimistic;
+    setMessages((old) => [...old, optimistic]);
+    setConversations((items) => [...items.map((item) => item.id === selected.id
+      ? { ...item, lastMessage: "Sneak", lastSenderId: liveUser.uid, lastMessageAt: optimistic.createdAt }
+      : item)].sort((a, b) => (b.lastMessageAt?.toMillis() || 0) - (a.lastMessageAt?.toMillis() || 0)));
+    try {
+      const file = await cameraDataUrlToFile(dataUrl, "none", 1);
+      await sendSneak(selected.id, liveUser.uid, recipientId, file);
+        setSneakCameraOpen(false);
+    } catch (error) {
+      delete pendingMessages.current[pendingId];
+      setMessages((old) => old.filter((item) => item.id !== pendingId));
+      setSneakCameraOpen(false);
+      setError(error instanceof Error ? error.message : "Could not send Sneak.");
+    }
+    finally { setSneakBusy(false); }
+  };
+  const prepareSneakForFriends = (dataUrl: string) => {
+    setSneakCameraOpen(false);
+    setSneakDraftDataUrl(dataUrl);
+    setSneakRecipientIds([]);
+    setSneakFriendSearch("");
+    setSneakPickerOpen(true);
+  };
+  const sendSneakToFriends = async () => {
+    if (!sneakDraftDataUrl || !sneakRecipientIds.length || sneakBusy) return;
+    setSneakBusy(true);
+    try {
+      const file = await cameraDataUrlToFile(sneakDraftDataUrl, "none", 1);
+      const sendWork = Promise.all(sneakRecipientIds.map(async (recipientId) => {
+        const profile = friendProfiles.find((item) => item.uid === recipientId);
+        if (!profile) return;
+        const conversationId = await createConversation(liveUser.uid, profile);
+        await sendSneak(conversationId, liveUser.uid, recipientId, file);
+      }));
+      await Promise.race([sendWork, new Promise<never>((_, reject) => window.setTimeout(() => reject(new Error("Sneak sending timed out. Check your connection and Supabase function logs.")), 30000))]);
+      setSneakPickerOpen(false);
+      setSneakDraftDataUrl(null);
+      setSneakRecipientIds([]);
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Could not send Sneak.");
+    } finally {
+      setSneakBusy(false);
+      // Always dismiss the picker after the send attempt so a completed send
+      // cannot leave the Android WebView looking frozen.
+      setSneakPickerOpen(false);
+      setSneakDraftDataUrl(null);
+      setSneakRecipientIds([]);
+    }
+  };
+  const openSneak = async (message: ChatMessage) => {
+    if (!selected || !message.sneak || message.sneak.recipientId !== liveUser.uid || sneakBusy) return;
+    setSneakBusy(true);
+    try {
+      const result = await consumeSneak(selected.id, message.id, liveUser.uid);
+      setSneakViewer({ url: result.url, messageId: message.id });
+    } catch (error) { setError(error instanceof Error ? error.message : "This Sneak is no longer available."); }
+    finally { setSneakBusy(false); }
+  };
+  const startConversation = async (profile: UserProfile) => {
+    try {
+      const id = await createConversation(liveUser.uid, profile);
+      if (!id) throw new Error("Firebase is not configured.");
+      setShowNew(false);
+      setSearch("");
+      setPage("chats");
+      openConversation({
+        id,
+        name: profile.displayName,
+        avatar: DEFAULT_AVATAR_URL,
+        photoURL: profile.photoURL || DEFAULT_AVATAR_URL,
+        memberIds: [liveUser.uid, profile.uid],
+        lastMessage: "",
+      });
+    } catch (e) {
+      setError(
+        e instanceof Error
+          ? e.message.replace("Firebase: ", "")
+          : "Could not create that conversation.",
+      );
+    }
+  };
+  const logout = async () => {
+    try {
+      // The native Google provider keeps its own session on Android. Clear it
+      // as well as the Firebase web session so the next Google sign-in shows
+      // the account chooser instead of silently reusing the last account.
+      if (!preview && Capacitor.isNativePlatform() && Capacitor.getPlatform() === "android") {
+        await FirebaseAuthentication.signOut().catch(() => undefined);
+      }
+      if (auth && !preview) await signOut(auth);
+      setPreview(false);
+      setUser(null);
+      setSelected(null);
+      setPage("chats");
+    } catch {
+      setError("Could not sign out. Please try again.");
+    }
+  };
+  const save = async (event: FormEvent) => {
+    event.preventDefault();
+    if (preview) return;
+    try {
+      await saveProfile(liveUser.uid, {
+        displayName: profileName,
+        username: profileUsername,
+        bio: profileBio,
+        notificationsEnabled,
+        discoverable,
+        hideTwittIdentity,
+        activeStatus,
+        photoURL: profilePhotoUrl,
+      });
+      // Profile photos are stored in the profile service; Firebase Auth's
+      // photoURL field has a small URL limit and must not receive a data URL.
+      await updateProfile(liveUser, { displayName: profileName });
+      localStorage.setItem(`cochat-username-${liveUser.uid}`, profileUsername.trim().toLowerCase());
+      setProfileName(profileName.trim());
+      setProfileUsername(profileUsername.trim().toLowerCase());
+      setProfileSaved(true);
+      setError("");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Profile could not be saved.");
+    }
+  };
+  const updatePreference = async (field: "notificationsEnabled" | "discoverable" | "activeStatus" | "hideTwittIdentity", value: boolean) => {
+    if (preview) return;
+    const next = { notificationsEnabled, discoverable, activeStatus, [field]: value };
+    if (field === "notificationsEnabled") setNotificationsEnabled(value);
+    if (field === "discoverable") setDiscoverable(value);
+    if (field === "activeStatus") setActiveStatus(value);
+    if (field === "hideTwittIdentity") setHideTwittIdentity(value);
+    try {
+      await saveProfile(liveUser.uid, { displayName: profileName, username: profileUsername, bio: profileBio, ...next });
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Could not update that preference.");
+    }
+  };
+  const shareProfile = async (displayName: string, username: string) => {
+    const handle = username.trim() ? `@${username.trim()}` : displayName.trim();
+    const message = `${displayName.trim() || "Anonymous"} is on Co-Chat — ${handle}`;
+    try {
+      if (navigator.share) await navigator.share({ title: "Co-Chat profile", text: message, url: window.location.href });
+      else {
+        await navigator.clipboard.writeText(message);
+        setError("Profile details copied to your clipboard.");
+      }
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return;
+      setError("Could not share this profile.");
+    }
+  };
+  const call = async (type: "audio" | "video") => {
+    if (!selected || preview || selected.memberIds.length < 2) {
+      setError("Sign in and start a conversation with another person to call.");
+      return;
+    }
+    try {
+      await createCall(selected.memberIds, type, liveUser.uid);
+      setError(
+        type === "audio"
+          ? "Voice call request sent."
+          : "Video call request sent.",
+      );
+    } catch {
+      setError("Could not create the call request.");
+    }
+  };
+  const declineIncomingCall = async () => {
+    if (!incomingCall) return;
+    if (incomingCall.groupId) {
+      setDismissedGroupCallIds(old => old.includes(incomingCall.id) ? old : [...old, incomingCall.id]);
+      setIncomingCall(null);
+    } else {
+      await declineCall(incomingCall.id).catch(() => undefined);
+      setIncomingCall(null);
+    }
+  };
+  const acceptIncomingCall = async () => {
+    if (!incomingCall || !liveUser) return;
+    if (incomingCall.groupId) {
+      setGroupCall({ id: incomingCall.id, name: incomingCall.groupName || "Group voice call", memberIds: incomingCall.memberIds, callerId: incomingCall.callerId || "", host: false });
+      setIncomingCall(null);
+      return;
+    }
+    const caller = incomingCall.callerId ? await getUserProfile(incomingCall.callerId) : null;
+    setVoiceTarget({ id: incomingCall.id, name: caller?.displayName || "Incoming caller", photoURL: caller?.photoURL || undefined, memberIds: incomingCall.memberIds });
+    setIncomingCall(null);
+    setVoiceRole("callee");
+    setShowVoiceCall(true);
+  };
+  const activeGroupCount = selected?.type === "group"
+    ? Math.min(selected.memberIds.length, groupMembers.filter((member) => member.activeStatus !== false && Boolean(member.lastSeen) && presenceNow - (member.lastSeen?.toMillis() || 0) < 90000).length)
+    : 0;
+  const selectedFriendProfile = selected?.type === "direct" && liveUser
+    ? friendProfiles.find((profile) => selected.memberIds.includes(profile.uid) && profile.uid !== liveUser.uid)
+    : null;
+  const selectedIsActive = selectedFriendProfile ? selectedFriendProfile.activeStatus !== false && presenceNow - (selectedFriendProfile.lastSeen?.toMillis() || 0) < 90000 : selected?.active;
+  const selectedLastSeen = selectedFriendProfile?.lastSeen || selected?.lastSeen;
+  const selectedPhotoURL = selectedFriendProfile?.photoURL || selected?.photoURL;
+  if (groupCall)
+    return <main className="app"><GroupVoiceCall uid={liveUser.uid} callId={groupCall.id} groupName={groupCall.name} memberIds={groupCall.memberIds} callerId={groupCall.callerId} host={groupCall.host} onClose={closeGroupCall} /></main>;
+  if (selected)
+    return (
+      <main className={`app chat-screen${isNativeAndroid ? " native-android" : ""}`} onTouchStart={handleChatTouchStart} onTouchEnd={handleChatTouchEnd}>
+        <header className="chat-header">
+          <button className="icon" onClick={() => setSelected(null)}>
+            ←
+          </button>
+          <button
+            className={`avatar profile-avatar ${selected.type === "group" && activeGroupCount > 0 ? "group-avatar-active" : ""}`}
+            type="button"
+            title={selected.type === "group" ? "Open group settings" : "Open profile"}
+            onClick={() => setShowChatProfile(true)}
+          >
+            <Avatar name={selected.name} photoURL={selectedPhotoURL} className="avatar chat-header-avatar" active={selectedIsActive} />
+          </button>
+          <div>
+            <strong>{selected.name}</strong>
+            <small>
+              {selected.type === "group"
+                ? (activeGroupCount > 0 && <span className="group-active-summary">{activeGroupCount} Active now</span>)
+                : selected.id.startsWith("preview-") ? "Preview conversation" : (
+                <span className={selectedIsActive ? "active-presence" : ""}>
+                  {presenceLabel(selectedIsActive, selectedLastSeen)}
+                </span>
+              )}
+            </small>
+          </div>
+          <button
+            className="icon"
+            title="Start audio call"
+            onClick={async () => {
+              if (selected.type === "group") {
+                try {
+                  const id = await createCall(selected.memberIds, "audio", liveUser.uid, { id: selected.id, name: selected.name });
+                  if (id) setGroupCall({ id, name: selected.name, memberIds: selected.memberIds, callerId: liveUser.uid, host: true });
+                } catch (error) { setError(error instanceof Error ? error.message : "Could not start the group call."); }
+              } else {
+                setVoiceRole("caller");
+                setVoiceTarget({ id: selected.id, name: selected.name, photoURL: selected.photoURL || undefined, memberIds: selected.memberIds });
+                setShowVoiceCall(true);
+              }
+            }}
+          >
+            <svg className="call-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M6.6 3.8 9.2 3c.7-.2 1.4.2 1.7.8l1.2 2.8c.2.5.1 1.1-.3 1.5L10.3 9.6a13.7 13.7 0 0 0 4.1 4.1l1.5-1.5c.4-.4 1-.5 1.5-.3l2.8 1.2c.6.3 1 1 .8 1.7l-.8 2.6c-.2.7-.9 1.1-1.6 1.1C11.1 18.5 5.5 12.9 5.5 5.4c0-.7.4-1.4 1.1-1.6Z" />
+              <path d="M14.7 4.1a6.2 6.2 0 0 1 5.2 5.2M14.7 1.2a9.1 9.1 0 0 1 8.1 8.1" />
+            </svg>
+          </button>
+        </header>
+        {showChatProfile && selected.type === "group" && (
+          <div className="person-profile chat-profile-menu">
+            <button
+              className="icon close-profile"
+              type="button"
+              onClick={() => setShowChatProfile(false)}
+            >
+              ×
+            </button>
+            <div className="group-profile-hero"><div className="group-profile-avatar"><Avatar name={selected.name} photoURL={selected.photoURL} className="avatar large" />{selected.adminId === liveUser.uid && <label className="group-avatar-edit" title="Change group photo">✎<input type="file" accept="image/jpeg,image/png,image/webp,image/gif" disabled={groupPhotoBusy} onChange={async (event) => { const file = event.target.files?.[0]; event.currentTarget.value = ""; if (!file) return; if (file.size > 5 * 1024 * 1024) { setError("Group photos must be smaller than 5 MB."); return; } setGroupPhotoBusy(true); try { const uploaded = await StorageManager.upload(file, { ownerId: liveUser.uid, originalName: file.name, mimeType: file.type, sizeBytes: file.size, conversationId: selected.id }); await updateGroup(selected.id, liveUser.uid, selected.name, uploaded.url); setSelected(old => old ? { ...old, photoURL: uploaded.url } : old); } catch (error) { setError(error instanceof Error ? error.message : "Could not update group photo."); } finally { setGroupPhotoBusy(false); } }} /></label>}</div><div><h3>{selected.name}</h3><p className="group-profile-subtitle">{selected.memberIds.length} members · {activeGroupCount} active now</p></div></div>
+            <small>
+              {selected.type === "group"
+                ? `${selected.memberIds.length} members · Admin: ${groupMembers.find((member) => member.uid === selected.adminId)?.displayName || "Group creator"}`
+                : "Conversation profile"}
+            </small>
+            {selected.type === "group" && (
+              <>
+                <div className="group-profile-tools"><span>GROUP PHOTO</span><small>{selected.adminId === liveUser.uid ? (groupPhotoBusy ? "Uploading…" : "Admin can change this photo") : "Only the group admin can change this photo"}</small></div>
+                <div className="group-member-list">
+                  {groupMembers.map((member) => (
+                    <div className="person-result" key={member.uid}>
+                      <Avatar profile={member} />
+                      <span className="chat-copy">
+                        <strong>
+                          {member.displayName}
+                          {member.uid === selected.adminId ? " · Admin" : ""}
+                        </strong>
+                        <span>@{member.username}</span>
+                      </span>
+                      {selected.adminId === liveUser.uid &&
+                        member.uid !== liveUser.uid && (
+                          <button
+                            className="secondary compact"
+                            type="button"
+                            onClick={async () => {
+                              await removeGroupMember(
+                                selected.id,
+                                liveUser.uid,
+                                member.uid,
+                              ).catch(() => undefined);
+                              setGroupMembers((old) =>
+                                old.filter((item) => item.uid !== member.uid),
+                              );
+                            }}
+                          >
+                            Remove
+                          </button>
+                        )}
+                    </div>
+                  ))}
+                </div>
+                <div className="profile-actions group-add-members">
+                  <button className="secondary" type="button" onClick={() => setShowAddMembers(value => !value)}>
+                    {showAddMembers ? "Close friend list" : "Add friends"}
+                  </button>
+                  {showAddMembers && (
+                    <div className="group-friend-picker">
+                      <small>Select accepted friends to add</small>
+                      <input className="search" value={groupFriendSearch} onChange={event => setGroupFriendSearch(event.target.value)} placeholder="Search your friends" />
+                      <div className="group-friend-results">
+                      {groupFriends.filter(friend => !selected.memberIds.includes(friend.uid) && (!groupFriendSearch.trim() || `${friend.displayName} ${friend.username}`.toLowerCase().includes(groupFriendSearch.trim().toLowerCase()))).map(friend => (
+                        <button className="person-result" type="button" key={friend.uid} onClick={async () => {
+                          try {
+                            await addGroupMembers(selected.id, liveUser.uid, [friend]);
+                            setGroupMembers(old => [...old, friend]);
+                            setSelected(old => old ? { ...old, memberIds: [...old.memberIds, friend.uid] } : old);
+                            setGroupFriends(old => old.filter(item => item.uid !== friend.uid));
+                          } catch (error) { setError(error instanceof Error ? error.message : "Could not add this friend."); }
+                        }}>
+                          <Avatar profile={friend} />
+                          <span className="chat-copy"><strong>{friend.displayName}</strong><span>@{friend.username}</span></span>
+                          <span>＋</span>
+                        </button>
+                      ))}
+                      {!groupFriends.some(friend => !selected.memberIds.includes(friend.uid) && (!groupFriendSearch.trim() || `${friend.displayName} ${friend.username}`.toLowerCase().includes(groupFriendSearch.trim().toLowerCase()))) && <small>No matching accepted friends.</small>}
+                      </div>
+                    </div>
+                  )}
+                </div>
+                {selected.adminId === liveUser.uid && (
+                  <div className="profile-actions">
+                    <input
+                      value={groupEditName}
+                      onChange={(event) => setGroupEditName(event.target.value)}
+                      maxLength={80}
+                      placeholder="Group name"
+                    />
+                    <button
+                      className="secondary"
+                      type="button"
+                      onClick={async () => {
+                        await updateGroup(
+                          selected.id,
+                          liveUser.uid,
+                          groupEditName,
+                        ).catch(() => undefined);
+                        setSelected((old) =>
+                          old
+                            ? { ...old, name: groupEditName.trim() || old.name }
+                            : old,
+                        );
+                        setShowChatProfile(false);
+                      }}
+                    >
+                      Save group name
+                    </button>
+                  </div>
+                )}
+              </>
+            )}
+            <div className="profile-actions">
+              {selected.type !== "group" && (
+                <button
+                  className="secondary"
+                  type="button"
+                  onClick={() => setShowChatProfile(false)}
+                >
+                  View profile
+                </button>
+              )}
+              {selected.type === "group" ? (
+                <button className="secondary" type="button" onClick={async () => {
+                  try { await leaveGroup(selected.id, liveUser.uid); setShowChatProfile(false); setSelected(null); setError("You left the group."); }
+                  catch (error) { setError(error instanceof Error ? error.message : "Could not leave the group."); }
+                }}>Leave group</button>
+              ) : null}
+            </div>
+          </div>
+        )}
+        {showChatProfile && selected.type === "direct" && createPortal(
+          <div className="profile-sheet-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setShowChatProfile(false); }}>
+          <div className="person-profile chat-profile-menu direct-chat-profile" role="dialog" aria-modal="true" aria-label="Conversation profile" onMouseDown={(event) => event.stopPropagation()}>
+            <button className="icon close-profile" type="button" aria-label="Close profile" onClick={() => setShowChatProfile(false)}>×</button>
+            <Avatar name={directProfile?.displayName || selected.name} photoURL={directProfile?.photoURL || selected.photoURL} className="avatar large profile-sheet-avatar" />
+            <span className="settings-eyebrow">CONVERSATION PROFILE</span>
+            <h3>{directProfile?.displayName || selected.name}{directProfile && isVerified(directProfile.uid) && <VerifiedTick />}</h3>
+            <p>@{directProfile?.username || "member"}</p>
+            <div className="direct-profile-summary">
+              <span>{selectedIsActive ? "● Online now" : "○ Offline"}</span>
+              <span>{directProfile?.bio?.trim() || "No bio added yet."}</span>
+            </div>
+            <div className="profile-actions">
+              <button className="secondary danger-outline" type="button" onClick={() => {
+                const otherUid = selected.memberIds.find((id) => id !== liveUser.uid)
+                if (!otherUid) return
+                if (!window.confirm("Block this person? The conversation will be removed and they will disappear from search.")) return
+                void blockUser(liveUser.uid, otherUid).then(() => {
+                  setBlockedUsers((old) => old.includes(otherUid) ? old : [...old, otherUid])
+                  setShowChatProfile(false)
+                  setSelected(null)
+                  setError("User blocked and conversation removed.")
+                }).catch((error) => setError(error instanceof Error ? error.message : "Could not block this user."))
+              }}>Block user</button>
+            </div>
+          </div>
+          </div>,
+          document.body,
+        )}
+        {showVoiceCall && voiceTarget && (
+          <VoiceCall
+            uid={liveUser.uid}
+            otherUid={voiceTarget.memberIds.find((id) => id !== liveUser.uid) || ""}
+            otherName={voiceTarget.name}
+            otherPhotoURL={voiceTarget.photoURL}
+            role={voiceRole}
+            onClose={() => { setShowVoiceCall(false); setVoiceTarget(null); }}
+          />
+        )}
+        {encryptionNoticeVisible && <div className="conversation-security" role="status">
+          <span className="conversation-security-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M7.5 10V7.8a4.5 4.5 0 0 1 9 0V10"/><rect x="5" y="10" width="14" height="10" rx="2"/><path d="M12 14v2"/></svg></span>
+          <span className="conversation-security-copy"><strong>Private conversation</strong><small>Preparing a secure session</small></span>
+          <span className="conversation-security-signal" aria-hidden="true"><i/><i/><i/></span>
+        </div>}
+        {conversationOpening ? (
+          <section className="conversation-opening" aria-live="polite" aria-label={`Opening conversation with ${selected.name}`}>
+            <div className="conversation-opening-visual" aria-hidden="true">
+              <span className="conversation-opening-ring ring-one" />
+              <span className="conversation-opening-ring ring-two" />
+              <span className="conversation-opening-spark spark-one">✦</span>
+              <span className="conversation-opening-spark spark-two">·</span>
+              <span className="conversation-opening-lock"><svg className="conversation-lock-svg" viewBox="0 0 48 48"><path d="M15 21v-5.5a9 9 0 0 1 18 0V21"/><rect x="10" y="20" width="28" height="20" rx="5"/><circle cx="24" cy="29" r="2.2"/><path d="M24 31.5v3.5"/></svg></span>
+            </div>
+            <div className="conversation-opening-copy"><span className="conversation-opening-eyebrow">PRIVATE SESSION</span><strong>Unlocking your conversation</strong><small>Securing the connection and loading messages…</small></div>
+            <div className="conversation-opening-steps" aria-hidden="true"><span className="active"><i/>Identity</span><b/><span><i/>Session</span><b/><span><i/>Messages</span></div>
+          </section>
+        ) : <section className="messages" ref={messagesViewportRef} onScroll={(event) => {
+          const container = event.currentTarget;
+          stickMessagesToBottom.current = container.scrollHeight - container.scrollTop - container.clientHeight < 140;
+        }}>
+          {!messages.length && <div className="conversation-empty" role="status"><span className="conversation-empty-icon">✦</span><strong>No messages yet</strong><small>Send a message to start the conversation.</small></div>}
+          {messages.map((item) => {
+            const mine =
+              item.senderId === liveUser.uid || item.senderId === "me";
+            const sender = mine
+              ? profileName || "You"
+              : senderNames[item.senderId] || "Loading…";
+            // Older Sneak rows may not have the newer `sneak` metadata after
+            // a schema refresh, but their legacy text is still identifiable.
+            // Treat those rows as Sneaks so internal status text never leaks
+            // into the conversation transcript.
+            const isSneakMessage = Boolean(item.sneak) || item.text === "Serving pixels";
+            return (
+              <div className={`bubble ${mine ? "me" : ""}`} key={item.id}>
+                {item.replyTo && (
+                  <div className="reply-quote">
+                    ↪ {item.replyTo.text || "Attachment"}
+                  </div>
+                )}
+                {isSneakMessage ? (
+                  <div className={`sneak-card ${item.sneak?.state || "consumed"}`}>
+                    <div className="sneak-card-title"><span className="sneak-glyph">◈</span><strong>{mine ? "Sent" : "Received"} {relativeMessageAge(item.createdAt)}</strong></div>
+                    {item.sneak?.state === "unopened" && item.sneak.recipientId === liveUser.uid && <button type="button" className="sneak-open-button" disabled={sneakBusy} onClick={() => void openSneak(item)}>Open Sneak</button>}
+                    <small>One-time Sneak · one view</small>
+                  </div>
+                ) : item.attachment &&
+                  (item.attachment.type.startsWith("image/") ? (
+                    <img
+                      className="message-image"
+                      loading="lazy"
+                      decoding="async"
+                      src={item.attachment.url}
+                      alt={item.attachment.name}
+                      onClick={() => item.attachment && setImagePreview(item.attachment)}
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={(event) => { if ((event.key === "Enter" || event.key === " ") && item.attachment) setImagePreview(item.attachment); }}
+                    />
+                  ) : (
+                    <a
+                      className="attachment"
+                      href={item.attachment.url}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      <MediaIcon /> {item.attachment.name}
+                    </a>
+                  ))}
+                    {selected.memberIds.length > 2 && (
+                  <strong className="message-sender">{sender}{isVerified(item.senderId) && <VerifiedTick />}</strong>
+                  )}
+                {!isSneakMessage && item.text && <span>{item.text}</span>}
+                <small>
+                  {formatTime(item.createdAt) || "now"}
+                  <button
+                    className="reply-button"
+                    type="button"
+                    onClick={() => setReplyTarget(item)}
+                  >
+                    Reply
+                  </button>
+                  <button
+                      className="reply-button"
+                      type="button"
+                      title="Message options"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setMessageMenu(item);
+                      }}
+                    >
+                      ⋯
+                    </button>
+                </small>
+              </div>
+            );
+          })}
+        </section>}
+        {messageMenu && (
+          <div className="message-menu">
+            <button
+              type="button"
+              onClick={() => {
+                void navigator.clipboard?.writeText(messageMenu.text || "");
+                setMessageMenu(null);
+              }}
+            >
+              Copy text
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setForwardingMessage(messageMenu);
+                setMessageMenu(null);
+              }}
+            >
+              Forward
+            </button>
+            {messageMenu.senderId === liveUser.uid || messageMenu.senderId === "me" ? (
+              <button type="button" onClick={() => {
+                void unsendMessage(selected.id, messageMenu.id).catch(() => setError("Could not unsend this message."));
+                setMessageMenu(null);
+              }}>Unsend</button>
+            ) : (
+              <button type="button" onClick={() => {
+                void deleteMessageForMe(selected.id, messageMenu.id, liveUser.uid).catch(() => setError("Could not delete this message."));
+                setMessageMenu(null);
+              }}>Delete for me</button>
+            )}
+          </div>
+        )}
+        {forwardingMessage && (
+          <div className="forward-panel">
+            <div className="section-title">
+              FORWARD TO A FRIEND{" "}
+              <button
+                className="icon"
+                type="button"
+                onClick={() => setForwardingMessage(null)}
+              >
+                ×
+              </button>
+            </div>
+            {conversations
+              .filter(
+                (item) => item.id !== selected.id && item.memberIds.length > 1,
+              )
+              .map((item) => (
+                <button
+                  className="person-result"
+                  type="button"
+                  key={item.id}
+                  onClick={() => {
+                    void sendMessage(
+                      item.id,
+                      liveUser.uid,
+                      forwardingMessage.text,
+                    )
+                      .then(() => setForwardingMessage(null))
+                      .catch(() => setError("Could not forward this message."));
+                  }}
+                >
+                  <Avatar name={item.name} photoURL={item.photoURL} />
+                  <span className="chat-copy">
+                    <strong>{item.name}</strong>
+                    <span>Send message</span>
+                  </span>
+                </button>
+              ))}
+          </div>
+        )}
+        {imagePreview && (
+          <div className="media-preview-backdrop" role="dialog" aria-modal="true" aria-label="Image preview" onClick={() => setImagePreview(null)}>
+            <div className="media-preview-panel" onClick={(event) => event.stopPropagation()}>
+              <button className="icon media-preview-close" type="button" onClick={() => setImagePreview(null)} aria-label="Close image preview">×</button>
+              <img src={imagePreview.url} alt={imagePreview.name} />
+              <div className="media-preview-actions">
+                <a className="primary" href={imagePreview.url} download={imagePreview.name} target="_blank" rel="noreferrer">Save image</a>
+                <button className="secondary" type="button" onClick={() => setImagePreview(null)}>Close</button>
+              </div>
+            </div>
+          </div>
+        )}
+        {replyTarget && (
+          <div className="reply-compose">
+            Replying to: “{replyTarget.text || "attachment"}”
+            <button
+              type="button"
+              className="icon"
+              onClick={() => setReplyTarget(null)}
+            >
+              ×
+            </button>
+          </div>
+        )}
+        <form className="composer" onSubmit={send}>
+          {emojiOpen && <div className="emoji-picker" role="listbox">
+            {['😀','😂','😍','😊','👍','❤️','🎉','🔥','🙏','😎','👏','✨'].map(emoji => (
+              <button key={emoji} type="button" onClick={() => setText(current => current + emoji)}>{emoji}</button>
+            ))}
+          </div>}
+          <button className="emoji-button" type="button" title="Add emoji" onClick={() => setEmojiOpen(open => !open)}>☺</button>
+          <label className="attach-button" title="Attach a file">
+            <MediaIcon />
+            <input
+              type="file"
+              onChange={(e) => setSelectedFile(e.target.files?.[0] || null)}
+            />
+          </label>
+          {selected?.type !== "group" && selected?.memberIds.length === 2 && <button className="sneak-compose-button" type="button" title="Send a Sneak" aria-label="Send a Sneak" onClick={openSneakCamera}><span className="sneak-compose-glyph" aria-hidden="true">✦</span></button>}
+          <textarea
+            className="message-composer-input"
+            rows={1}
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); e.currentTarget.form?.requestSubmit(); } }}
+            placeholder={selectedFile ? selectedFile.name : "Write a message"}
+          />
+          <button className="primary" disabled={sendingMessage}>{sendingMessage ? "Sending…" : "Send"}</button>
+        </form>
+        <CameraStudio isOpen={sneakCameraOpen} onClose={() => setSneakCameraOpen(false)} onCapture={({ dataUrl }) => void sendCapturedSneak(dataUrl)} onSneak={({ dataUrl }) => prepareSneakForFriends(dataUrl)} onError={setError} />
+        {sneakPickerOpen && <div className="sneak-picker-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !sneakBusy) setSneakPickerOpen(false); }}><section className="sneak-picker" role="dialog" aria-modal="true" aria-label="Choose friends for Sneak"><header><div><strong>Send Sneak</strong><small>Choose one or more friends</small></div><button type="button" className="sneak-picker-close" disabled={sneakBusy} onClick={() => setSneakPickerOpen(false)}>×</button></header><img className="sneak-picker-preview" src={sneakDraftDataUrl || undefined} alt="Sneak preview" /><input className="sneak-picker-search" value={sneakFriendSearch} onChange={(event) => setSneakFriendSearch(event.target.value)} placeholder="Search friends" /><div className="sneak-picker-list">{friendProfiles.filter((friend) => `${friend.displayName} ${friend.username}`.toLowerCase().includes(sneakFriendSearch.trim().toLowerCase())).map((friend) => { const checked = sneakRecipientIds.includes(friend.uid); return <button type="button" className={`sneak-friend-row ${checked ? "selected" : ""}`} key={friend.uid} onClick={() => setSneakRecipientIds((items) => checked ? items.filter((id) => id !== friend.uid) : [...items, friend.uid])}><Avatar name={friend.displayName} photoURL={friend.photoURL} className="avatar" /><span><b>{friend.displayName}</b><small>@{friend.username || "friend"}</small></span><i aria-hidden="true">{checked ? "✓" : ""}</i></button>; })}{!friendProfiles.length && <small className="sneak-picker-empty">No accepted friends yet.</small>}</div><footer><span>{sneakRecipientIds.length} selected</span><button type="button" className="camera-studio-primary" disabled={!sneakRecipientIds.length || sneakBusy} onClick={() => void sendSneakToFriends()}>{sneakBusy ? "Sending…" : "Send Sneak"}</button></footer></section></div>}
+        {sneakViewer && <div className="sneak-viewer" role="dialog" aria-modal="true" aria-label="Sneak viewer"><button type="button" className="sneak-viewer-close" aria-label="Close Sneak" onClick={() => { URL.revokeObjectURL(sneakViewer.url); setSneakViewer(null); }}>×</button><img src={sneakViewer.url} alt="Sneak" /></div>}
+        {incomingCall && (
+          <IncomingCall
+            name={incomingCall.groupId ? (incomingCall.groupName || "Group voice call") : incomingCallerName}
+            photoURL={incomingCall.groupId ? undefined : incomingCallerPhoto}
+            group={Boolean(incomingCall.groupId)}
+            onDecline={declineIncomingCall}
+            onAccept={acceptIncomingCall}
+          />
+        )}
+      </main>
+    );
+  return (
+    <main className={`app page-${page}${isNativeAndroid ? " native-android" : ""}`} onTouchStart={handleChatTouchStart} onTouchEnd={handleChatTouchEnd}>
+      <header className="topbar">
+        {page === "settings" ? (
+          <div className="settings-topbar-title">
+            <strong>Settings and Profile</strong>
+          </div>
+        ) : (
+          <div>
+            <div className="brand-line">
+              <span className="mini-mark">C</span>
+              <strong>Co‑Chat</strong>
+            </div>
+            <div className="eyebrow">YOUR SPACE · YOUR RHYTHM</div>
+          </div>
+        )}
+        <div className="topbar-actions">
+          {(page === "chats" || page === "communities") && (
+            <button
+              className="icon"
+              type="button"
+              title="Friend requests"
+              onClick={() => {
+                const next = !showFriendRequests;
+                if (next && liveUser.uid !== "preview" && unseenFriendRequestIds.length) {
+                  const key = `cochat-seen-friend-requests-${liveUser.uid}`;
+                  let seen: string[] = [];
+                  try { seen = JSON.parse(localStorage.getItem(key) || "[]"); } catch { seen = []; }
+                  const merged = [...new Set([...seen, ...unseenFriendRequestIds])];
+                  localStorage.setItem(key, JSON.stringify(merged));
+                  setUnseenFriendRequestIds([]);
+                }
+                setShowFriendRequests(next);
+              }}
+            >
+              <span className="bell-wrap">🔔{unseenFriendRequestIds.length > 0 && <span className="notification-dot" />}</span>
+            </button>
+          )}
+          <button className="icon camera-header-button" type="button" title="Open camera" aria-label="Open camera" onClick={() => { setPage("discover"); window.setTimeout(() => window.dispatchEvent(new Event("cochat-open-camera")), 120); }}>📷</button>
+          <button
+            className="avatar profile-button"
+            type="button"
+            aria-label="Open profile and settings"
+            onClick={() => setPage("settings")}
+          >
+            <Avatar name={liveUser.displayName || liveUser.email || "U"} photoURL={liveUser.photoURL || undefined} />
+          </button>
+        </div>
+      </header>
+      {user && !user.emailVerified && (
+        <div className="notice" role="status">
+          <span>Verify your email to keep your account secure. {verificationSent ? "Check your inbox." : ""}</span>
+          {!verificationSent && <button type="button" className="secondary compact" disabled={verificationCooldown > 0} onClick={() => void resendVerification()}>{verificationCooldown > 0 ? `Resend in ${verificationCooldown}s` : "Resend email"}</button>}
+        </div>
+      )}
+      {(page === "chats" || page === "communities") && showFriendRequests && (
+        <div className="notification-panel">
+          <FriendZone uid={liveUser.uid} onMessage={startConversation} />
+        </div>
+      )}
+      {incomingCall && (
+        <IncomingCall
+          name={incomingCall.groupId ? (incomingCall.groupName || "Group voice call") : incomingCallerName}
+          photoURL={incomingCall.groupId ? undefined : incomingCallerPhoto}
+          group={Boolean(incomingCall.groupId)}
+          onDecline={declineIncomingCall}
+          onAccept={acceptIncomingCall}
+        />
+      )}
+      {showVoiceCall && voiceTarget && (
+        <VoiceCall
+          uid={liveUser.uid}
+          otherUid={voiceTarget.memberIds.find((id) => id !== liveUser.uid) || ""}
+          otherName={voiceTarget.name}
+          otherPhotoURL={voiceTarget.photoURL}
+          role={voiceRole}
+          onClose={() => { setShowVoiceCall(false); setVoiceTarget(null); }}
+        />
+      )}
+      <section className="content">
+        {error && (
+          <div className="notice">
+            {error}
+            <button className="icon" onClick={() => setError("")}>
+              ×
+            </button>
+          </div>
+        )}
+        {(page === "chats" || page === "communities") && (
+          <>
+            {page === "chats" && <input
+              className="search"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search friends or users"
+            />}
+            {page === "chats" && search.trim() && (
+              <SearchPanel uid={liveUser.uid} onSelect={startConversation} externalTerm={search} onTermChange={setSearch} embedded />
+            )}
+            {page === "chats" && (
+              <section className="online-section" aria-label="Users online">
+                <div className="section-title">USERS ONLINE</div>
+                <div className="online-tray">
+                  {onlineUsers.map((item) => {
+                    const profile = liveUser?.uid === "preview"
+                      ? null
+                      : friendProfiles.find((friend) => item.memberIds.includes(friend.uid) || friend.uid === item.id);
+                    const name = profile?.displayName || item.name;
+                    return (
+                    <button
+                      type="button"
+                      className="online-person"
+                      key={item.id}
+                      onClick={() => profile ? void startConversation(profile) : openConversation(item)}
+                    >
+                      <Avatar name={name} profile={profile} active />
+                      <span>{name.split(" ")[0]}</span>
+                    </button>
+                    );
+                  })}
+                  {!onlineUsers.length && <small>No friends are online right now.</small>}
+                </div>
+              </section>
+            )}
+            {page === "communities" && (
+              <>
+              <div className="community-create-card"><div><span className="kicker">YOUR GROUP SPACE</span><strong>Create a private group</strong><small>Choose friends and keep the full Co-Chat experience in one conversation.</small></div><button className="primary" type="button" onClick={() => setShowGroup(true)}>＋ Create group</button></div>
+              </>
+            )}
+            <div className="section-title">
+              {page === "communities" ? "COMMUNITY CHATS" : "RECENT CONVERSATIONS"}
+            </div>
+            <div className="list">
+              {conversationsLoading && <div className="chat-skeleton-list" aria-label="Loading conversations">{[1, 2, 3].map((item) => <div className="chat-skeleton" key={item}><span/><div><b/><i/></div><em/></div>)}</div>}
+              {visible
+                .filter((item) =>
+                  page === "communities" ? item.type === "group" : item.type !== "group",
+                )
+                .map((item) => (
+                <button
+                  className="chat-row"
+                  key={item.id}
+                  onClick={() => {
+                    if (suppressConversationClick.current) {
+                      suppressConversationClick.current = false;
+                      return;
+                    }
+                    openConversation(item);
+                  }}
+                  onContextMenu={(event) => {
+                    event.preventDefault();
+                    setConversationMenu(item);
+                  }}
+                  onPointerDown={() => {
+                    holdTimers.current[item.id] = window.setTimeout(() => {
+                      suppressConversationClick.current = true;
+                      setConversationMenu(item);
+                    }, 550);
+                  }}
+                  onPointerUp={() =>
+                    window.clearTimeout(holdTimers.current[item.id])
+                  }
+                  onPointerLeave={() =>
+                    window.clearTimeout(holdTimers.current[item.id])
+                  }
+                >
+                  <Avatar name={item.name} photoURL={item.photoURL} active={Boolean(item.active)} />
+                  <span className="chat-copy">
+                    <strong>{item.name}</strong>
+                    <span className={item.unreadCount ? "unread-preview" : ""}>
+                      {(item.lastMessage === "Sneak" || item.lastMessage === "Serving pixels")
+? <><span className="sneak-list-glyph">✦</span> {item.lastSenderId === liveUser.uid ? "Sent a Sneak" : "Sent you a Sneak"}</>
+                        : item.lastSenderId === liveUser.uid
+                        ? item.lastMessageSeen
+                          ? `Seen ${relativeMessageTime(item.lastMessageAt)}`
+                          : `Sent ${relativeMessageTime(item.lastMessageAt)}`
+                        : item.unreadCount
+                          ? `${item.unreadCount > 4 ? "4+" : item.unreadCount} new message${item.unreadCount === 1 ? "" : "s"}`
+                          : item.lastMessage
+                            ? `Received ${relativeMessageTime(item.lastMessageAt)}`
+                            : "Start a conversation"}
+                    </span>
+                  </span>
+                </button>
+              ))}
+              {!conversationsLoading && !visible.filter((item) =>
+                page === "communities" ? item.type === "group" : item.type !== "group",
+              ).length && (
+                <div className="empty-state">
+                  <span className="empty-state-icon" aria-hidden="true">✦</span>
+                  <strong>{page === "communities" ? "No groups yet." : "No chats yet."}</strong>
+                  <span>{page === "communities" ? "Create a private group and bring your people together." : "Find someone from People and start the conversation."}</span>
+                  {page === "chats" ? <button className="primary compact" type="button" onClick={() => setShowNew(true)}>Find someone</button> : <button className="primary compact" type="button" onClick={() => setShowGroup(true)}>Create a group</button>}
+                </div>
+              )}
+            </div>
+            {conversationMenu && (
+              <div className="conversation-menu-backdrop" onClick={() => setConversationMenu(null)}>
+                <div
+                  className="conversation-menu"
+                  role="dialog"
+                  aria-modal="true"
+                  aria-label="Conversation actions"
+                  onClick={(event) => event.stopPropagation()}
+                >
+                  <button
+                    className="icon close-profile"
+                    type="button"
+                    onClick={() => setConversationMenu(null)}
+                  >
+                    ×
+                  </button>
+                  <strong>{conversationMenu.name}</strong>
+                  <button
+                    className="secondary"
+                    type="button"
+                    onClick={() => {
+                      openConversation(conversationMenu);
+                      setConversationMenu(null);
+                    }}
+                  >
+                    Open chat
+                  </button>
+                  <button
+                    className="danger"
+                    type="button"
+                    onClick={() => {
+                      setDeleteTarget(conversationMenu);
+                      setConversationMenu(null);
+                    }}
+                  >
+                    Delete conversation
+                  </button>
+                </div>
+              </div>
+            )}
+            {deleteTarget && (
+              <div className="modal-backdrop">
+                <section className="modal" role="dialog" aria-modal="true">
+                  <h2>Delete conversation?</h2>
+                  <p>This permanently deletes the conversation and its messages for everyone.</p>
+                  <div className="group-step-actions">
+                    <button className="secondary" type="button" onClick={() => setDeleteTarget(null)}>Cancel</button>
+                    <button className="danger" type="button" onClick={async () => {
+                      try {
+                      await deleteConversation(
+                        deleteTarget.id,
+                        liveUser.uid,
+                      );
+                      setConversations((current) =>
+                        current.filter((item) => item.id !== deleteTarget.id),
+                      );
+                      setSelected((current) =>
+                        current?.id === deleteTarget.id ? null : current,
+                      );
+                      setDeleteTarget(null);
+                    } catch (e) {
+                      setError(
+                        e instanceof Error
+                          ? e.message
+                          : "Could not delete conversation.",
+                      );
+                    }
+                    }}>Delete</button>
+                  </div>
+                </section>
+              </div>
+            )}
+            {showNew && (
+              <NewConversation
+                uid={liveUser.uid}
+                onSelect={startConversation}
+                onClose={() => setShowNew(false)}
+              />
+            )}
+            {showGroup && (
+              <GroupCreator
+                uid={liveUser.uid}
+                onCreated={(conversation) => {
+                  setShowGroup(false);
+                  setConversations((current) => [conversation, ...current.filter((item) => item.id !== conversation.id)]);
+                  openConversation(conversation);
+                }}
+                onClose={() => setShowGroup(false)}
+              />
+            )}
+          </>
+        )}
+        {page === "study" && <StudyHome uid={liveUser.uid} onOpenDiscover={() => { setDiscoverCommunity("all"); setPage("discover"); }} />}
+        {page === "discover" && <TwittFeed initialCommunity={discoverCommunity} />}
+        {page === "status" && <div className="empty-state">No stories yet.</div>}
+        {(page === "profile" || page === "settings") && (
+          <div className="settings-page">
+            <form className="profile-card settings-profile-card" onSubmit={save}>
+              <div className="settings-card-kicker">PROFILE & IDENTITY <span>Changes sync across devices</span></div>
+              <div className="settings-profile-heading"><button type="button" className="settings-avatar-upload" title="Change profile photo" onClick={() => document.getElementById("profile-photo-input")?.click()}><div className="settings-avatar-wrap"><Avatar name={profileName || liveUser.email || "Anonymous"} photoURL={profilePhotoUrl || undefined} className="avatar large" /><span className={`settings-presence ${activeStatus ? "online" : ""}`} /></div><span className="settings-avatar-camera">📷</span></button><input id="profile-photo-input" className="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp,image/gif" onChange={(event) => { const file = event.target.files?.[0]; event.currentTarget.value = ""; if (!file) return; if (file.size > 5 * 1024 * 1024) { setError("Profile photos must be smaller than 5 MB."); return; } const reader = new FileReader(); reader.onload = () => { setProfilePhotoUrl(String(reader.result || "")); setProfileSaved(false); }; reader.readAsDataURL(file); }} /><div><span className="settings-eyebrow">PROFILE</span><h2>{profileName || "Anonymous"}{isVerified(liveUser.uid) && <VerifiedTick />}</h2><p>{liveUser.email}</p></div></div>
+              <div className="profile-details" aria-label="Profile details">
+                {isVerified(liveUser.uid) && <span className="verified-profile-label"><VerifiedTick />Verified account</span>}
+                <span><b>@</b>{profileUsername || "choose a username"}</span>
+                <span><b>✦</b>{liveUser.emailVerified ? "Verified account" : "Email verification pending"}</span>
+                <span><b>◌</b>{activeStatus ? "Available to friends" : "Activity hidden"}</span>
+              </div>
+              <div className="settings-form-grid">
+                <label className="field-label">Display name<input value={profileName} onChange={(e) => { setProfileName(e.target.value); setProfileSaved(false); }} required /></label>
+                <label className="field-label">Username<input value={profileUsername} onChange={(e) => { setProfileUsername(e.target.value.replace(/[^a-zA-Z0-9_]/g, "").toLowerCase()); setProfileSaved(false); }} minLength={3} maxLength={24} pattern="[a-z0-9_]+" required /><small>3–24 characters: letters, numbers, and underscores.</small></label>
+              </div>
+              <label className="field-label settings-bio-field">About you<textarea value={profileBio} onChange={(e) => { setProfileBio(e.target.value); setProfileSaved(false); }} maxLength={160} placeholder="A short line about what you are learning…" /><small>Shown when someone opens your profile from People or your friend list.</small></label>
+              <div className="settings-save-row"><span>{profileSaved ? "Profile saved successfully" : "Changes sync across your devices"}</span><button type="submit" className="primary" disabled={preview}>{profileSaved ? "Saved ✓" : "Save profile"}</button></div>
+            </form>
+            {isModerator(liveUser.uid) && <section className="moderator-tools" aria-label="Moderator tools"><div><strong>Moderator tools</strong><small>Restrict Twitt posting for 3 days and remove the user’s existing Twitts.</small></div><button className="danger" type="button" onClick={async () => { const username = window.prompt("Enter the username to restrict (without @):")?.trim().replace(/^@/, ""); if (!username) return; try { const matches = await findUsers(username, liveUser.uid).catch(() => []); const target = matches.find((profile) => profile.username.toLowerCase() === username.toLowerCase()) || matches[0]; const targetName = target?.username || username; if (!window.confirm(`Restrict @${targetName} for 3 days and delete their Twitts?`)) return; const result = await restrictTwittUser(liveUser.uid, target?.uid, username); setError(`@${result.username || targetName} is restricted from Twitts for 3 days. ${result.deletedCount} Twitts deleted.`); } catch (error) { setError(error instanceof Error ? error.message : "Could not restrict that account."); } }}>Restrict for 3 days</button></section>}
+            <div className="settings settings-list">
+              <div className="settings-section-label">YOUR CO-CHAT EXPERIENCE <span>Personalize your space</span></div>
+              <button type="button" onClick={() => void shareProfile(profileName, profileUsername)}>
+                <span className="settings-row-icon">↗</span><span className="settings-option-copy"><b>Share your profile</b><small>Send your name and handle to a friend</small></span><span>›</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setDarkMode((value) => !value)}
+              >
+                <span className="settings-row-icon">◐</span><span className="settings-option-copy"><b>Appearance</b><small>Choose the {darkMode ? "dark" : "light"} Co‑Chat theme</small></span><span className="settings-value">{darkMode ? "Dark" : "Light"} <span className="chevron">›</span></span>
+              </button>
+              <button type="button" onClick={() => void updatePreference("notificationsEnabled", !notificationsEnabled)}>
+                <span className="settings-row-icon">⌁</span><span className="settings-option-copy"><b>Notifications</b><small>Get updates about messages and study activity</small></span><span className={`settings-toggle ${notificationsEnabled ? "on" : ""}`} aria-label={notificationsEnabled ? "Notifications on" : "Notifications off"}><span /></span>
+              </button>
+              <button type="button" onClick={() => void updatePreference("discoverable", !discoverable)}>
+                <span className="settings-row-icon">◎</span><span className="settings-option-copy"><b>Discoverability</b><small>{discoverable ? "Let friends find you in People and Discover" : "Hidden from browsing; exact username searches still work"}</small></span><span className={`settings-toggle ${discoverable ? "on" : ""}`} aria-label={discoverable ? "Discoverability on" : "Discoverability off"}><span /></span>
+              </button>
+              <button type="button" onClick={() => void updatePreference("hideTwittIdentity", !hideTwittIdentity)}>
+                <span className="settings-row-icon">◌</span><span className="settings-option-copy"><b>Hide identity on Twitts</b><small>{hideTwittIdentity ? "Posts show Anonymous with the default avatar" : "Show your profile when you post"}</small></span><span className={`settings-toggle ${hideTwittIdentity ? "on" : ""}`} aria-label={hideTwittIdentity ? "Twitt identity hidden" : "Twitt identity visible"}><span /></span>
+              </button>
+              <button
+                type="button"
+                onClick={() => void updatePreference("activeStatus", !activeStatus)}
+              >
+                <span className={`settings-row-icon ${activeStatus ? "online" : ""}`}>●</span><span className="settings-option-copy"><b>Active status</b><small>Let friends see when you are available</small></span><span className={`settings-toggle ${activeStatus ? "on" : ""}`} aria-label={activeStatus ? "Active status on" : "Active status off"}><span /></span>
+              </button>
+              <button type="button" aria-expanded={showBlocklist} aria-controls="settings-blocklist" onClick={() => setShowBlocklist((value) => !value)}>
+                <span className="settings-row-icon">⊘</span><span className="settings-option-copy"><b>Blocklist</b><small>Manage people you’ve blocked</small></span><span className="settings-value">{blockedUsers.length} blocked <span className="chevron">›</span></span>
+              </button>
+              {showBlocklist && <div id="settings-blocklist" className="settings-blocklist" role="region" aria-label="Blocked people">{blockedProfiles.length ? blockedProfiles.map((profile) => <div className="settings-blocked-person" key={profile.uid}><Avatar profile={profile} className="avatar settings-blocked-avatar" /><span className="settings-blocked-copy"><b>{profile.displayName}</b><small>@{profile.username}</small></span><button type="button" className="secondary compact" onClick={() => void unblockFromSettings(profile)}>Unblock</button></div>) : <p>No blocked people yet.</p>}</div>}
+              <button type="button" className="settings-danger" onClick={logout}>
+                <span className="settings-row-icon">↪</span><span className="settings-option-copy"><b>Log out</b><small>Sign out of this device</small></span><span>›</span>
+              </button>
+            </div>
+          </div>
+        )}
+      </section>
+      <Nav page={page} setPage={setPage} isAndroid={isNativeAndroid} />
+    </main>
+  );
+}
+
+function IncomingCall({
+  name,
+  photoURL,
+  group,
+  onAccept,
+  onDecline,
+}: {
+  name: string;
+  photoURL?: string;
+  group?: boolean;
+  onAccept: () => void;
+  onDecline: () => void;
+}) {
+  return (
+    <div className="call-backdrop">
+      <section className="call-card">
+        <Avatar name={name} photoURL={photoURL} className="avatar large" />
+        <p className="eyebrow">{group ? "INCOMING GROUP VOICE CALL" : "INCOMING VOICE CALL"}</p>
+        <h2>{name}</h2>
+        <p>{group ? "Join the conference call" : "Wants to talk with you"}</p>
+        <div className="call-actions">
+          <button className="secondary" onClick={onDecline}>
+            Decline
+          </button>
+          <button className="primary" onClick={onAccept}>
+            Accept
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function FriendZone({
+  uid,
+  onMessage,
+}: {
+  uid: string;
+  onMessage: (profile: UserProfile) => void;
+}) {
+  const [requests, setRequests] = useState<
+    import("./services/chat").FriendRequest[]
+  >([]);
+  const [profiles, setProfiles] = useState<Record<string, UserProfile>>({});
+  const [focused, setFocused] = useState<UserProfile | null>(null);
+  const [blocked, setBlocked] = useState<string[]>([]);
+  const [removedFriendIds, setRemovedFriendIds] = useState<string[]>([]);
+  const [profileExpanded, setProfileExpanded] = useState(false);
+  useEffect(() => watchFriendRequests(uid, setRequests), [uid]);
+  useEffect(() => {
+    listBlockedUsers(uid)
+      .then((items) => setBlocked(items.map((item) => item.blockedId)))
+      .catch(() => undefined);
+  }, [uid]);
+  useEffect(() => {
+    const ids: string[] = [
+      ...new Set<string>(
+        requests
+          .flatMap((item) => [item.fromUid, item.toUid])
+          .filter((id) => id !== uid),
+      ),
+    ];
+    Promise.all(
+      ids.map(async (id) => [id, await getUserProfile(id)] as const),
+    ).then((items) => setProfiles((old) => {
+      const next = { ...old };
+      items.forEach(([id, profile]) => { if (profile) next[id] = profile; });
+      return next;
+    }));
+  }, [requests, uid]);
+  const incoming = requests.filter(
+    (item) => item.toUid === uid && !blocked.includes(item.fromUid),
+  );
+  const friends = requests.filter(
+    (item) =>
+      item.status === "accepted" &&
+      !removedFriendIds.includes(item.fromUid === uid ? item.toUid : item.fromUid) &&
+      !blocked.includes(item.fromUid === uid ? item.toUid : item.fromUid),
+  );
+  const unfriend = async (profile: UserProfile) => {
+    if (!window.confirm(`Remove ${profile.displayName} from your friends?`)) return;
+    try {
+      await removeFriend(uid, profile.uid);
+      setRemovedFriendIds((current) => [...new Set([...current, profile.uid])]);
+      setFocused(null);
+    } catch {
+      // Keep the profile open so the user can retry.
+    }
+  };
+  const blockProfile = async (profile: UserProfile) => {
+    if (!window.confirm(`Block ${profile.displayName}? They will disappear from your people and friend lists.`)) return;
+    await blockUser(uid, profile.uid).catch(() => undefined);
+    setBlocked((current) => [...new Set([...current, profile.uid])]);
+    setFocused(null);
+  };
+  const shareProfile = async (profile: UserProfile) => {
+    const message = `${profile.displayName} is on Co-Chat — @${profile.username}`;
+    try {
+      if (navigator.share) await navigator.share({ title: "Co-Chat profile", text: message, url: window.location.href });
+      else await navigator.clipboard.writeText(message);
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return;
+    }
+  };
+  return (
+    <div className="friend-zone">
+      <div className="section-title">FRIEND ZONE</div>
+      {incoming.length > 0 && (
+        <div className="friend-section">
+          <strong>Friend requests</strong>
+          {incoming.map((item) => {
+            const profile = profiles[item.fromUid];
+            return (
+              <div className="person-result" key={item.id}>
+                <button
+                  className="avatar profile-avatar"
+                  type="button"
+                  onClick={() =>
+                    profile && (setFocused(profile), setProfileExpanded(false))
+                  }
+                >
+                  <Avatar profile={profile} />
+                </button>
+                <span className="chat-copy">
+                  <strong>{profile?.displayName || "Someone"}</strong>
+                  <span>@{profile?.username || "user"}</span>
+                </span>
+                <button
+                  className="secondary compact"
+                  type="button"
+                  onClick={() => void (async () => {
+                    await respondToFriendRequest(item.fromUid, uid, true)
+                    // The friend request store is shared with Firebase, while
+                    // Supabase chat keeps conversations in its own database.
+                    // Create the direct chat immediately after acceptance so
+                    // both users see it in their conversation list.
+                    if (profile && isSupabaseChatEnabled()) await createConversation(uid, profile)
+                  })().catch(() => undefined)}
+                >
+                  Accept
+                </button>
+                <button
+                  className="icon"
+                  type="button"
+                  onClick={() =>
+                    respondToFriendRequest(item.fromUid, uid, false)
+                  }
+                >
+                  ×
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+      {friends.length > 0 && (
+        <div className="friend-section">
+          <strong>Your friends</strong>
+          {friends.map((item) => {
+            const other =
+              profiles[item.fromUid === uid ? item.toUid : item.fromUid];
+            return (
+              <div className="person-result" key={item.id}>
+                <button
+                  className="avatar profile-avatar"
+                  type="button"
+                  onClick={() => {
+                    if (other) {
+                      setFocused(other);
+                      setProfileExpanded(false);
+                    }
+                  }}
+                >
+                  <Avatar profile={other} />
+                </button>
+                <span className="chat-copy">
+                  <strong>{other?.displayName || "Friend"}</strong>
+                  <span>@{other?.username || "user"}</span>
+                </span>
+                {other && (
+                  <button
+                    className="secondary compact"
+                    type="button"
+                    onClick={() => onMessage(other)}
+                  >
+                    Message
+                  </button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+      {!incoming.length && !friends.length && (
+        <div className="empty-state">
+          Your friend zone is empty. Search for someone to connect.
+        </div>
+      )}
+      {focused && createPortal(
+        <div className="profile-sheet-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setFocused(null); }}>
+        <div className="person-profile profile-sheet" role="dialog" aria-modal="true" aria-label="User profile" onMouseDown={(event) => event.stopPropagation()}>
+          <button
+            className="icon close-profile"
+            type="button"
+            onClick={() => setFocused(null)}
+          >
+            ×
+          </button>
+          <Avatar profile={focused} className="avatar large" />
+          <span className="settings-eyebrow">CO-CHAT PROFILE</span>
+          <h3>{focused.displayName}{isVerified(focused.uid) && <VerifiedTick />}</h3>
+          <p>@{focused.username}</p>
+          <div className="public-profile-atmosphere">
+            <div className="public-profile-level"><span className="profile-rank-badge">I</span><div><b>Bronze I</b><small>Study level · building momentum</small></div><span className="profile-online-pill">{focused.activeStatus === false ? "Offline" : "Available"}</span></div>
+            <div className="public-profile-stats"><span><b>0h</b><small>study logged</small></span><span><b>0</b><small>day streak</small></span><span><b>New</b><small>member</small></span></div>
+            <div className="public-profile-achievements"><small>ACHIEVEMENTS</small><div><span>{focused.profileComplete ? "✦ Profile complete" : "○ Profile in progress"}</span><span>♧ Community ready</span></div></div>
+          </div>
+          {profileExpanded && (
+            <div className="public-profile-details">
+              <span>{focused.bio?.trim() || "This person has not added a bio yet."}</span>
+              <small>Friend on Co-Chat · Public profile</small>
+              {focused.activeStatus === false && <small>Active status hidden</small>}
+            </div>
+          )}
+          <div className="profile-actions">
+            <button
+              className="primary"
+              type="button"
+              onClick={() => {
+                setFocused(null);
+                onMessage(focused);
+              }}
+            >
+              Message
+            </button>
+            <button className="secondary" type="button" onClick={() => void shareProfile(focused)}>
+              Share
+            </button>
+            {friends.some((item) => (item.fromUid === uid ? item.toUid : item.fromUid) === focused.uid) && <button className="secondary danger-outline" type="button" onClick={() => void unfriend(focused)}>Unfriend</button>}
+            <button className="secondary danger-outline" type="button" onClick={() => void blockProfile(focused)}>Block</button>
+            <button
+              className="secondary"
+              type="button"
+              onClick={() => setProfileExpanded(true)}
+            >
+              View profile
+            </button>
+          </div>
+        </div>
+        </div>,
+        document.body,
+      )}
+    </div>
+  );
+}
+
+function SearchPanel({
+  uid,
+  onSelect,
+  externalTerm,
+  onTermChange,
+  embedded = false,
+}: {
+  uid: string;
+  onSelect: (profile: UserProfile) => void;
+  externalTerm?: string;
+  onTermChange?: (value: string) => void;
+  embedded?: boolean;
+}) {
+  const [term, setTerm] = useState("");
+  // Search history is intentionally disabled; searches are session-only.
+  const history: Array<{ uid: string; displayName: string; username: string }> = [];
+  const setHistory = (_value: Array<{ uid: string; displayName: string; username: string }>) => undefined;
+  const activeTerm = externalTerm ?? term;
+  const [results, setResults] = useState<UserProfile[]>([]);
+  const [relationships, setRelationships] = useState<Record<string, string>>(
+    {},
+  );
+  const [actionError, setActionError] = useState("");
+  const [focused, setFocused] = useState<UserProfile | null>(null);
+  const [profileExpanded, setProfileExpanded] = useState(false);
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (activeTerm.trim())
+        findUsers(activeTerm, uid)
+          .then(setResults)
+          .catch(() => setResults([]));
+      else setResults([]);
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [activeTerm, uid]);
+  useEffect(() => {
+    Promise.all(
+      results.map(
+        async (profile) =>
+          [profile.uid, await getFriendship(uid, profile.uid)] as const,
+      ),
+    ).then((items) => setRelationships(Object.fromEntries(items)));
+  }, [results, uid]);
+  const remember = (_profile?: UserProfile) => setProfileExpanded(false);
+  const action = async (profile: UserProfile) => {
+    setActionError("");
+    const relationship = relationships[profile.uid] || "none";
+    try {
+      if (relationship === "friends") {
+        remember(profile);
+        onSelect(profile);
+      } else if (relationship === "incoming") {
+        throw new Error(
+          "This person has already sent you a request. Open the bell in Chats to review it.",
+        );
+      } else if (relationship === "none") {
+        await sendFriendRequest(uid, profile.uid);
+        setRelationships((old) => ({ ...old, [profile.uid]: "requested" }));
+      }
+    } catch (error) {
+      setActionError(
+        error instanceof Error
+          ? error.message
+          : "Could not update this connection.",
+      );
+    }
+  };
+  const unfriend = async (profile: UserProfile) => {
+    if (!window.confirm(`Remove ${profile.displayName} from your friends?`)) return;
+    try {
+      await removeFriend(uid, profile.uid);
+      setRelationships((old) => ({ ...old, [profile.uid]: "none" }));
+      setFocused(null);
+    } catch {
+      setActionError("Could not remove this friend.");
+    }
+  };
+  const blockProfile = async (profile: UserProfile) => {
+    if (!window.confirm(`Block ${profile.displayName}? They will no longer appear in your people lists.`)) return;
+    try {
+      await blockUser(uid, profile.uid);
+      setRelationships((old) => ({ ...old, [profile.uid]: "blocked" }));
+      setResults((current) => current.filter((item) => item.uid !== profile.uid));
+      setFocused(null);
+    } catch {
+      setActionError("Could not block this person.");
+    }
+  };
+  const shareProfile = async (profile: UserProfile) => {
+    const message = `${profile.displayName} is on Co-Chat — @${profile.username}`;
+    try {
+      if (navigator.share) await navigator.share({ title: "Co-Chat profile", text: message, url: window.location.href });
+      else {
+        await navigator.clipboard.writeText(message);
+        setActionError("Profile details copied to your clipboard.");
+      }
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return;
+      setActionError("Could not share this profile.");
+    }
+  };
+  return (
+    <section className={`search-panel ${embedded ? "search-panel-embedded" : ""}`}>
+      {!embedded && <><p className="eyebrow">FIND PEOPLE</p><h2>Search Co‑Chat</h2><input autoFocus value={activeTerm} onChange={(e) => { setTerm(e.target.value); onTermChange?.(e.target.value); }} placeholder="Search by username" /></>}
+      {actionError && (
+        <div className="notice">
+          {actionError}
+          <button
+            className="icon"
+            type="button"
+            onClick={() => setActionError("")}
+          >
+            ×
+          </button>
+        </div>
+      )}
+      {history.length > 0 && (
+        <div className="search-history">
+          <div className="section-title">
+            RECENT PROFILES{" "}
+            <button
+              className="icon"
+              type="button"
+              onClick={() => {
+                setHistory([]);
+                localStorage.removeItem(`cochat-search-history-${uid}`);
+              }}
+            >
+              Clear
+            </button>
+          </div>
+          {history.map((item) => (
+            <button
+              className="person-result history-profile"
+              type="button"
+              key={item.uid}
+              onClick={() => {
+                setTerm(item.username);
+                onTermChange?.(item.username);
+                remember(item as UserProfile);
+              }}
+            >
+              <Avatar profile={item as UserProfile} />
+              <span className="chat-copy">
+                <strong>{item.displayName}</strong>
+                <span>@{item.username}</span>
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+      <div className="list">
+        {results.map((profile) => {
+          const relationship = relationships[profile.uid] || "loading";
+          return (
+            <div
+              className="person-result"
+              key={profile.uid}
+              onClick={() => remember(profile)}
+            >
+              <button
+                className="avatar profile-avatar"
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setFocused(profile);
+                }}
+              >
+                <Avatar profile={profile} />
+              </button>
+              <span className="chat-copy">
+                <strong>{profile.displayName}</strong>
+                <span>@{profile.username}</span>
+              </span>
+              <button
+                className="secondary compact"
+                type="button"
+                  disabled={
+                  relationship === "loading"
+                }
+                onClick={(event) => {
+                  event.stopPropagation();
+                  if (relationship === "requested")
+                    void cancelFriendRequest(uid, profile.uid)
+                      .then(() =>
+                        setRelationships((old) => ({ ...old, [profile.uid]: "none" })),
+                      )
+                      .catch(() => setActionError("Could not cancel this request."));
+                  else if (relationship === "friends" || relationship === "none")
+                    void action(profile);
+                  else setFocused(profile);
+                }}
+              >
+                {relationship === "friends"
+                  ? "Message"
+                  : relationship === "requested"
+                    ? "Requested"
+                    : relationship === "incoming"
+                      ? "Pending request"
+                      : "Add friend"}
+              </button>
+            </div>
+          );
+        })}
+        {activeTerm && !results.length && (
+          <div className="empty-state">No matching people yet.</div>
+        )}
+      </div>
+      {focused && createPortal(
+        <div className="profile-sheet-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setFocused(null); }}>
+        <div className="person-profile profile-sheet" role="dialog" aria-modal="true" aria-label="User profile" onMouseDown={(event) => event.stopPropagation()}>
+          <button
+            className="icon close-profile"
+            type="button"
+            onClick={() => setFocused(null)}
+          >
+            ×
+          </button>
+          <Avatar profile={focused} className="avatar large" />
+          <span className="settings-eyebrow">CO-CHAT PROFILE</span>
+          <h3>{focused.displayName}{isVerified(focused.uid) && <VerifiedTick />}</h3>
+          <p>@{focused.username}</p>
+          <div className="public-profile-atmosphere">
+            <div className="public-profile-level"><span className="profile-rank-badge">I</span><div><b>Bronze I</b><small>Study level · building momentum</small></div><span className="profile-online-pill">{focused.activeStatus === false ? "Offline" : "Available"}</span></div>
+            <div className="public-profile-stats"><span><b>0h</b><small>study logged</small></span><span><b>0</b><small>day streak</small></span><span><b>New</b><small>member</small></span></div>
+            <div className="public-profile-achievements"><small>ACHIEVEMENTS</small><div><span>{focused.profileComplete ? "✦ Profile complete" : "○ Profile in progress"}</span><span>♧ Community ready</span></div></div>
+          </div>
+          <small>
+            {relationships[focused.uid] === "friends"
+              ? "Friend on Co-Chat"
+              : "Co-Chat profile"}
+          </small>
+          <div className="public-profile-details">
+            <span>{focused.bio?.trim() || "This person has not added a bio yet."}</span>
+            <small>Username: @{focused.username}</small>
+            {focused.activeStatus === false && <small>Active status hidden</small>}
+          </div>
+          <div className="profile-actions">
+            {relationships[focused.uid] === "friends" ? (
+              <button className="primary" type="button" onClick={() => { setFocused(null); onSelect(focused); }}>Message</button>
+            ) : relationships[focused.uid] === "none" ? (
+              <button className="primary" type="button" onClick={() => void action(focused)}>Add friend</button>
+            ) : (
+              <button className="secondary" type="button" disabled>{relationships[focused.uid] === "incoming" ? "Request received" : "Request sent"}</button>
+            )}
+            <button className="secondary" type="button" onClick={() => void shareProfile(focused)}>Share</button>
+            {relationships[focused.uid] === "friends" && <button className="secondary danger-outline" type="button" onClick={() => void unfriend(focused)}>Unfriend</button>}
+            <button className="secondary danger-outline" type="button" onClick={() => void blockProfile(focused)}>Block</button>
+          </div>
+        </div>
+        </div>,
+        document.body,
+      )}
+    </section>
+  );
+}
+
+function GroupCreator({
+  uid,
+  onCreated,
+  onClose,
+}: {
+  uid: string;
+  onCreated: (conversation: Conversation) => void;
+  onClose: () => void;
+}) {
+  const [name, setName] = useState("");
+  const [term, setTerm] = useState("");
+  const [results, setResults] = useState<UserProfile[]>([]);
+  const [friendPool, setFriendPool] = useState<UserProfile[]>([]);
+  const [members, setMembers] = useState<UserProfile[]>([]);
+  const [step, setStep] = useState<1 | 2>(1);
+  const [error, setError] = useState("");
+  const [creating, setCreating] = useState(false);
+  useEffect(() => {
+    listFriends(uid)
+      .then(setFriendPool)
+      .catch(() => setFriendPool([]));
+  }, [uid]);
+  useEffect(() => {
+    const normalized = term.trim().toLowerCase();
+    setResults(
+      friendPool.filter(
+        (item) =>
+          !members.some((member) => member.uid === item.uid) &&
+          (!normalized ||
+            item.username.toLowerCase().includes(normalized) ||
+            item.displayName.toLowerCase().includes(normalized)),
+      ),
+    );
+  }, [term, friendPool, members]);
+  const create = async () => {
+    if (members.length < 2) {
+      setError("Choose at least two friends first.");
+      return;
+    }
+    if (creating) return;
+    setCreating(true);
+    setError("");
+    try {
+      const id = await createGroup(uid, name, members);
+      onCreated({
+        id,
+        name: name.trim() || "New group",
+        avatar: initials(name || "Group"),
+        memberIds: [uid, ...members.map((member) => member.uid)],
+        type: "group",
+        adminId: uid,
+        lastMessage: "",
+      });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "Could not create group.";
+      setError(message.toLowerCase().includes("unsupported action")
+        ? "The chat service needs its latest deployment. Deploy the updated chat-api function, then try again."
+        : message);
+    } finally {
+      setCreating(false);
+    }
+  };
+  return (
+    <div className="modal-backdrop">
+      <section className="modal group-creator">
+        <header>
+          <div>
+            <p className="eyebrow">STEP {step} OF 2</p>
+            <h2>{step === 1 ? "Choose friends" : "Name your group"}</h2>
+          </div>
+          <button className="icon" type="button" onClick={onClose}>
+            ×
+          </button>
+        </header>
+        <div className="group-stepper" aria-label={`Step ${step} of 2`}><span className={step >= 1 ? "active" : ""}>1</span><i className={step === 2 ? "active" : ""}/><span className={step === 2 ? "active" : ""}>2</span></div>
+        {step === 1 ? (
+          <>
+            <p className="modal-hint">
+              Add at least two accepted friends. You’ll be the group admin.
+            </p>
+            <input
+              autoFocus
+              value={term}
+              onChange={(e) => setTerm(e.target.value)}
+              placeholder="Search accepted friends by username"
+            />
+            {members.length > 0 && (
+              <div className="selected-members">
+                {members.map((member) => (
+                  <button
+                    className="secondary compact"
+                    type="button"
+                    key={member.uid}
+                    onClick={() =>
+                      setMembers((old) =>
+                        old.filter((item) => item.uid !== member.uid),
+                      )
+                    }
+                  >
+                    {member.displayName} ×
+                  </button>
+                ))}
+              </div>
+            )}
+            <div className="list">
+              {results.map((profile) => (
+                <button
+                  className="person-result"
+                  type="button"
+                  key={profile.uid}
+                  onClick={() => {
+                    setMembers((old) => [...old, profile]);
+                    setTerm("");
+                  }}
+                >
+                  <Avatar profile={profile} />
+                  <span className="chat-copy">
+                    <strong>{profile.displayName}</strong>
+                    <span>@{profile.username}</span>
+                  </span>
+                  <span>＋</span>
+                </button>
+              ))}
+              {!results.length && <div className="group-picker-empty"><strong>{term ? "No friend found" : "Your available friends will appear here"}</strong><span>{term ? "Try a different name or username." : "Accept a friend request first, then add them to a group."}</span></div>}
+            </div>
+            <button
+              className="primary"
+              type="button"
+              disabled={members.length < 2}
+              onClick={() => {
+                setError("");
+                setStep(2);
+              }}
+            >
+              Continue with {members.length} friend
+              {members.length === 1 ? "" : "s"}
+            </button>
+          </>
+        ) : (
+          <>
+            <div className="group-preview">
+              <div className="group-avatar-stack" aria-hidden="true">
+                <div className="avatar large group-preview-avatar">{initials(name || "Group")}</div>
+                {members.slice(0, 3).map((member, index) => <Avatar key={member.uid} profile={member} className={`avatar group-stack-avatar stack-${index}`} />)}
+              </div>
+              <div className="group-preview-copy"><strong>{name.trim() || "New group"}</strong><small>{members.length + 1} members · You are the admin</small><span>{members.map((member) => member.displayName).join(" · ")}</span></div>
+            </div>
+            <label className="field-label">
+              Group name
+              <input
+                autoFocus
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                maxLength={80}
+                placeholder="e.g. Weekend crew"
+              />
+            </label>
+            {error && <p className="error-text">{error}</p>}
+            <div className="group-step-actions">
+              <button
+                className="secondary"
+                type="button"
+                onClick={() => setStep(1)}
+              >
+                Back
+              </button>
+              <button
+                className="primary"
+                type="button"
+                onClick={() => void create()}
+                disabled={creating}
+              >
+                {creating ? "Creating…" : "Create group"}
+              </button>
+            </div>
+          </>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function NewConversation({
+  uid,
+  onSelect,
+  onClose,
+}: {
+  uid: string;
+  onSelect: (profile: UserProfile) => void;
+  onClose: () => void;
+}) {
+  const [term, setTerm] = useState("");
+  const [results, setResults] = useState<UserProfile[]>([]);
+  const [focused, setFocused] = useState<UserProfile | null>(null);
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (term.trim())
+        findUsers(term, uid)
+          .then(setResults)
+          .catch(() => setResults([]));
+      else setResults([]);
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [term, uid]);
+  return (
+    <div className="modal-backdrop">
+      <section className="modal">
+        <header>
+          <div>
+            <p className="eyebrow">FIND PEOPLE</p>
+            <h2>New conversation</h2>
+          </div>
+          <button className="icon" onClick={onClose}>
+            ×
+          </button>
+        </header>
+        <input
+          autoFocus
+          value={term}
+          onChange={(e) => setTerm(e.target.value)}
+          placeholder="Search by username"
+        />
+        <div className="list">
+          {results.map((profile) => (
+            <div className="person-result" key={profile.uid}>
+              <Avatar profile={profile} />
+              <span className="chat-copy">
+                <strong>{profile.displayName}</strong>
+                <span>@{profile.username}</span>
+              </span>
+              <button
+                className="secondary compact"
+                onClick={() => onSelect(profile)}
+              >
+                Message
+              </button>
+              <button
+                className="icon"
+                title="View profile"
+                onClick={() => setFocused(profile)}
+              >
+                ⋯
+              </button>
+            </div>
+          ))}
+          {term && !results.length && (
+            <div className="empty-state">No matching people yet.</div>
+          )}
+        </div>
+        {focused && (
+          <div className="person-profile">
+            <button
+              className="icon close-profile"
+              onClick={() => setFocused(null)}
+            >
+              ×
+            </button>
+            <Avatar profile={focused} className="avatar large" />
+            <h3>{focused.displayName}{isVerified(focused.uid) && <VerifiedTick />}</h3>
+            <p>@{focused.username}</p>
+            <button className="primary" onClick={() => onSelect(focused)}>
+              Message {focused.displayName.split(" ")[0]}
+            </button>
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}

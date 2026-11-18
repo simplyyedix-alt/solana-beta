@@ -1,0 +1,38 @@
+/* Light theme owns only light tokens and light-only surfaces. */
+[data-theme="light"]{
+  color-scheme:light;
+  --cc-bg:#f6f7fb;
+  --cc-surface:#ffffff;
+  --cc-surface-soft:#f3f4fa;
+  --cc-text:#172033;
+  --cc-muted:#667085;
+  --cc-border:#e1e5ee;
+  --cc-primary:#5b49d7;
+  --cc-primary-2:#9860e8;
+  --cc-danger:#c84761;
+  --cc-overlay:rgba(17,20,35,.44);
+  --premium-glow:#7668d8;
+  --premium-shadow:0 12px 30px rgba(45,35,105,.10);
+  --cc-modal-bg:#ffffff;
+}
+[data-theme="light"] .app{background:var(--cc-bg)}
+[data-theme="light"] .app.page-chats{background:radial-gradient(circle at 100% 0%,#7668d80d,transparent 30%),var(--cc-bg)}
+[data-theme="light"] .app.page-study{background:radial-gradient(circle at 0% 100%,#4e9eae0b,transparent 34%),var(--cc-bg)}
+[data-theme="light"] .app.page-communities{background:radial-gradient(circle at 100% 35%,#49a59b0b,transparent 28%),var(--cc-bg)}
+[data-theme="light"] .app.page-discover{background:var(--cc-bg)}
+[data-theme="light"] .app.page-settings,[data-theme="light"] .app.page-profile{background:radial-gradient(circle at 50% 0%,#7668d80d,transparent 30%),var(--cc-bg)}
+[data-theme="light"] .hero-card,[data-theme="light"] .profile-card{background:linear-gradient(145deg,#f0edff,var(--cc-surface))}
+[data-theme="light"] .twitt-card{background:var(--cc-surface);border-color:var(--cc-border);box-shadow:var(--premium-shadow)}
+[data-theme="light"] .feed-tabs,[data-theme="light"] .discovery-mode-tabs{background:var(--cc-surface-soft);border-color:var(--cc-border)}
+[data-theme="light"] .feed-tabs button.active,[data-theme="light"] .discovery-mode-tabs button.active{background:#e8e4ff;color:var(--cc-primary);box-shadow:0 5px 16px rgba(72,58,170,.12)}
+[data-theme="light"]{--cc-focus:#4a5568;--cc-selection-bg:#dfe5ef}
+[data-theme="light"] input,[data-theme="light"] textarea,[data-theme="light"] select{caret-color:var(--cc-focus)}
+[data-theme="light"] ::selection{background:var(--cc-selection-bg);color:#172033}
+[data-theme="light"] .search:focus,[data-theme="light"] input:focus,[data-theme="light"] textarea:focus,[data-theme="light"] select:focus,[data-theme="light"] button:focus-visible{border-color:#8a95a8;box-shadow:0 0 0 3px rgba(74,85,104,.14);outline:none}
+[data-theme="light"] .primary,[data-theme="light"] .secondary,[data-theme="light"] .discover-compose-fab{box-shadow:0 5px 14px rgba(57,66,92,.14)}
+[data-theme="light"] .modal,[data-theme="light"] .person-profile,[data-theme="light"] .profile-sheet{box-shadow:0 18px 48px rgba(38,45,70,.2)}
+[data-theme="light"] .discovery-mode-tabs button.active,[data-theme="light"] .feed-tabs button.active{background:color-mix(in srgb,var(--cc-text) 5%,var(--cc-surface-soft));color:var(--cc-text);box-shadow:inset 0 1px 0 rgba(255,255,255,.8);border:1px solid var(--cc-border);border-radius:10px}
+[data-theme="light"] .discovery-mode-tabs button.active>span,[data-theme="light"] .feed-tabs button.active>span{color:inherit}
+[data-theme="light"] .bottom-nav{box-shadow:none}
+[data-theme="light"] .bottom-nav button.active{background:var(--cc-surface-soft);color:var(--cc-text);box-shadow:0 3px 10px rgba(91,73,215,.12);border:1px solid var(--cc-border);filter:none}
+[data-theme="light"] .bottom-nav button.active span{filter:none}

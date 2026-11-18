@@ -1,0 +1,684 @@
+import {
+  addDoc,
+  arrayUnion,
+  increment,
+  collection,
+  deleteDoc,
+  doc,
+  getDoc,
+  getDocs,
+  limit,
+  onSnapshot,
+  orderBy,
+  query,
+  runTransaction,
+  serverTimestamp,
+  setDoc,
+  writeBatch,
+  Timestamp,
+  updateDoc,
+  where,
+  type DocumentData,
+  type Unsubscribe,
+} from 'firebase/firestore'
+import { auth, db } from '../firebase'
+import { StorageManager } from './storageManager'
+import { consumeSneak as consumeSupabaseSneak, listConversations as listSupabaseConversations, notifyRemoteEvent as notifySupabaseRemoteEvent, sendSneak as sendSupabaseSneak, touchPresence as touchSupabasePresence } from './supabaseChat'
+import { addGroupMembers as addSupabaseGroupMembers, createDirect, createGroup as createSupabaseGroup, deleteConversation as deleteSupabaseConversation, deleteForMe as deleteSupabaseMessageForMe, getProfile as getSupabaseProfile, getStudyLeaderboard as getSupabaseStudyLeaderboard, getStudyStats as getSupabaseStudyStats, isSupabaseChatEnabled, leaveGroup as leaveSupabaseGroup, markRead as markSupabaseRead, removeGroupMember as removeSupabaseGroupMember, saveStudySession as saveSupabaseStudySession, sendMessage as sendSupabaseMessage, unsend as unsendSupabaseMessage, updateGroup as updateSupabaseGroup, updateStudyPresence as updateSupabaseStudyPresence, upsertProfile as upsertSupabaseProfile, watchConversations as watchSupabaseConversations, watchIncomingConversationEvents as watchSupabaseIncomingConversationEvents, watchMessages as watchSupabaseMessages, type IncomingConversationEvent, type StudyLeaderboardEntry, type StudyStats } from './supabaseChat'
+export { isSupabaseChatEnabled } from './supabaseChat'
+
+export type UserProfile = { uid: string; displayName: string; email: string; username: string; photoURL?: string; bio?: string; notificationsEnabled?: boolean; discoverable?: boolean; activeStatus?: boolean; hideTwittIdentity?: boolean; theme?: 'light' | 'dark'; lastSeen?: Timestamp | null; profileComplete?: boolean }
+export type Conversation = {
+  id: string
+  name: string
+  username?: string
+  memberIds: string[]
+  lastMessage: string
+  lastSenderId?: string
+  lastMessageSeen?: boolean
+  lastMessageAt?: Timestamp | null
+  createdAt?: Timestamp | null
+  avatar: string
+  photoURL?: string
+  active?: boolean
+  lastSeen?: Timestamp | null
+  unreadCount?: number
+  hiddenFor?: string[]
+  type?: 'direct' | 'group'
+  adminId?: string
+}
+
+export type ChatAttachment = { name: string; url: string; type: string; size: number }
+export type SneakState = 'unopened' | 'consumed' | 'expired'
+export type ChatMessage = { id: string; text: string; senderId: string; createdAt?: Timestamp | null; attachment?: ChatAttachment | null; replyTo?: { id: string; text: string; senderId: string } | null; seenBy?: string[]; hiddenFor?: string[]; sneak?: { recipientId: string; state: SneakState; expiresAt?: Timestamp | null; consumedAt?: Timestamp | null } }
+export type Story = { id: string; uid: string; displayName: string; text: string; createdAt?: Timestamp | null; expiresAt?: Timestamp | null }
+export type CallRecord = { id: string; type: 'audio' | 'video'; status: string; memberIds: string[]; callerId?: string; calleeId?: string; groupId?: string; groupName?: string; joinedIds?: string[]; leftIds?: string[]; createdAt?: Timestamp | null }
+export type FriendRequest = { id: string; fromUid: string; toUid: string; status: 'pending' | 'accepted' | 'declined'; createdAt?: Timestamp | null }
+
+export type { StudyLeaderboardEntry }
+
+export async function saveStudySession(seconds: number, weekKey: string, studyDay?: string) {
+  if (isSupabaseChatEnabled()) return saveSupabaseStudySession(seconds, weekKey, studyDay)
+  return { ok: true, totalSeconds: seconds, weeklySeconds: seconds, weekKey, studyDays: [] } satisfies StudyStats & { ok: boolean }
+}
+
+export async function getStudyStats(weekKey: string): Promise<StudyStats | null> {
+  if (isSupabaseChatEnabled()) return getSupabaseStudyStats(weekKey)
+  return null
+}
+
+export async function updateStudyPresence(active: boolean, label = '') {
+  if (isSupabaseChatEnabled()) await updateSupabaseStudyPresence(active, label)
+}
+
+export async function getStudyLeaderboard(mode: 'friends' | 'public', uids: string[], weekKey: string): Promise<StudyLeaderboardEntry[]> {
+  return isSupabaseChatEnabled() ? getSupabaseStudyLeaderboard(mode, uids, weekKey) : []
+}
+
+export type BlockRecord = { id: string; blockerId: string; blockedId: string; createdAt?: Timestamp | null }
+
+export async function blockUser(blockerId: string, blockedId: string) {
+  if (!db || !blockerId || !blockedId || blockerId === blockedId) return
+  // Persist the block independently. Cleanup documents can be absent (or have
+  // different ownership rules), and putting those deletes in the same batch
+  // would make Firestore reject the block itself.
+  await setDoc(doc(db, 'blocks', `${blockerId}_${blockedId}`), { blockerId, blockedId, createdAt: serverTimestamp() }, { merge: true })
+  const cleanupRefs = [
+    doc(db, 'friendships', [blockerId, blockedId].sort().join('_')),
+    doc(db, 'friendRequests', `${blockerId}_${blockedId}`),
+    doc(db, 'friendRequests', `${blockedId}_${blockerId}`),
+  ]
+  await Promise.all(cleanupRefs.map((ref) => deleteDoc(ref).catch(() => undefined)))
+  // The migrated chat store has its own conversations. Remove direct chats
+  // after the block so neither participant keeps a stale navigation entry.
+  if (isSupabaseChatEnabled()) {
+    const conversations = await listSupabaseConversations(blockerId).catch(() => [])
+    await Promise.all(conversations
+      .filter((conversation) => conversation.type === 'direct' && conversation.memberIds.includes(blockedId))
+      .map((conversation) => deleteSupabaseConversation(conversation.id).catch(() => undefined)))
+  }
+}
+
+export async function unblockUser(blockerId: string, blockedId: string) {
+  if (!db) return
+  await deleteDoc(doc(db, 'blocks', `${blockerId}_${blockedId}`))
+}
+
+async function isBlockedBetween(uid: string, otherUid: string) {
+  if (!db || !uid || !otherUid) return false
+  const [outgoing, incoming] = await Promise.all([
+    getDoc(doc(db, 'blocks', `${uid}_${otherUid}`)),
+    getDoc(doc(db, 'blocks', `${otherUid}_${uid}`)),
+  ])
+  return outgoing.exists() || incoming.exists()
+}
+
+export async function removeFriend(uid: string, otherUid: string) {
+  if (!db) return
+  await deleteDoc(doc(db, 'friendships', [uid, otherUid].sort().join('_')))
+}
+
+export async function listBlockedUsers(blockerId: string): Promise<BlockRecord[]> {
+  if (!db) return []
+  const snapshot = await getDocs(query(collection(db, 'blocks'), where('blockerId', '==', blockerId)))
+  return snapshot.docs.map(item => ({ id: item.id, blockerId, blockedId: String(item.data().blockedId || ''), createdAt: asTimestamp(item.data().createdAt) }))
+}
+
+const initials = (name: string) => name.split(/\s+/).map(part => part[0]).join('').slice(0, 2).toUpperCase() || 'U'
+const asTimestamp = (value: unknown) => value instanceof Timestamp ? value : null
+const normalizeUsername = (value: string) => value.trim().toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 24)
+
+async function reserveUsername(uid: string, requested: string, fallback: string) {
+  if (!db) return normalizeUsername(requested || fallback)
+  const base = normalizeUsername(requested) || normalizeUsername(fallback) || `user${uid.slice(0, 8).toLowerCase()}`
+  const usernameRef = doc(db, 'usernames', base)
+  await runTransaction(db, async transaction => {
+    const existing = await transaction.get(usernameRef)
+    if (existing.exists() && existing.data().uid !== uid) throw new Error('That username is already taken.')
+    transaction.set(usernameRef, { uid, createdAt: existing.exists() ? existing.data().createdAt : serverTimestamp() }, { merge: true })
+  })
+  return base
+}
+
+export async function ensureUserProfile(uid: string, profile: Partial<UserProfile>) {
+  if (isSupabaseChatEnabled()) {
+    const [existing, firestoreProfile] = await Promise.all([
+      getSupabaseProfile(uid),
+      getFirestoreUserProfile(uid),
+    ])
+    // Firestore may contain the username the user explicitly chose before the
+    // chat backend was migrated. Keep both profile stores in sync so the
+    // study leaderboard never falls back to the Gmail local-part.
+    const username = normalizeUsername(
+      firestoreProfile?.username || existing?.username || profile.username ||
+      profile.displayName || profile.email?.split('@')[0] || `user${uid.slice(0, 8)}`,
+    )
+    await upsertSupabaseProfile(uid, {
+      ...profile,
+      displayName: firestoreProfile?.displayName || existing?.displayName || profile.displayName || '',
+      email: firestoreProfile?.email || existing?.email || profile.email || '',
+      photoURL: firestoreProfile?.photoURL || existing?.photoURL || profile.photoURL || '',
+      username,
+      bio: firestoreProfile?.bio || existing?.bio || profile.bio || '',
+      notificationsEnabled: firestoreProfile?.notificationsEnabled ?? existing?.notificationsEnabled ?? profile.notificationsEnabled,
+      discoverable: firestoreProfile?.discoverable ?? existing?.discoverable ?? profile.discoverable,
+      activeStatus: firestoreProfile?.activeStatus ?? existing?.activeStatus ?? profile.activeStatus,
+      hideTwittIdentity: firestoreProfile?.hideTwittIdentity ?? existing?.hideTwittIdentity ?? profile.hideTwittIdentity,
+    })
+      // Firestore can already contain the username chosen before the profile
+      // was synced to Supabase. Only new profiles need setup.
+      return !(firestoreProfile?.username || existing?.username)
+  }
+  if (!db) return false
+  const ref = doc(db, 'users', uid)
+  const current = await getDoc(ref)
+  const displayName = profile.displayName || profile.email?.split('@')[0] || 'Co-Chat member'
+  if (!current.exists()) {
+    let username = normalizeUsername(displayName) || `user${uid.slice(0, 8).toLowerCase()}`
+    try { username = await reserveUsername(uid, username, `user${uid.slice(0, 8).toLowerCase()}`) } catch { username = await reserveUsername(uid, `user${uid.slice(0, 8).toLowerCase()}`, `user${uid.slice(0, 8).toLowerCase()}`) }
+    // Reserve a safe placeholder so profile references remain valid, but keep
+    // setup incomplete until the user explicitly saves their chosen profile.
+    await setDoc(ref, { displayName, email: profile.email || '', username, photoURL: profile.photoURL || '', bio: '', notificationsEnabled: true, discoverable: true, profileComplete: false, createdAt: serverTimestamp() })
+    return true
+  }
+  else await updateDoc(ref, { displayName, email: profile.email || current.data().email || '', photoURL: profile.photoURL || current.data().photoURL || '' })
+  return !normalizeUsername(String(current.data().username || ''))
+}
+
+export async function getUserProfile(uid: string): Promise<UserProfile | null> {
+  if (isSupabaseChatEnabled()) {
+    const supabaseProfile = await getSupabaseProfile(uid)
+    const firestoreProfile = await getFirestoreUserProfile(uid)
+    if (!supabaseProfile) return firestoreProfile
+    return { ...supabaseProfile, displayName: firestoreProfile?.displayName || supabaseProfile.displayName, username: firestoreProfile?.username || supabaseProfile.username, photoURL: firestoreProfile?.photoURL || supabaseProfile.photoURL, bio: firestoreProfile?.bio || supabaseProfile.bio, hideTwittIdentity: firestoreProfile?.hideTwittIdentity ?? supabaseProfile.hideTwittIdentity }
+  }
+  if (!db) return null
+  return getFirestoreUserProfile(uid)
+}
+
+async function getFirestoreUserProfile(uid: string): Promise<UserProfile | null> {
+  if (!db) return null
+  const viewerUid = auth?.currentUser?.uid
+  const cacheKey = `${viewerUid || ''}:${uid}`
+  const cached = profileCache.get(cacheKey)
+  if (cached && cached.expiresAt > Date.now()) return cached.value
+  const pending = profileRequests.get(cacheKey)
+  if (pending) return pending
+  const request = (async () => {
+    if (viewerUid && viewerUid !== uid && await isBlockedBetween(viewerUid, uid)) return null
+    const snapshot = await getDoc(doc(db, 'users', uid))
+    return snapshot.exists() ? profileFromDoc(uid, snapshot.data()) : null
+  })()
+  profileRequests.set(cacheKey, request)
+  try {
+    const value = await request
+    profileCache.set(cacheKey, { value, expiresAt: Date.now() + 15000 })
+    return value
+  } finally {
+    profileRequests.delete(cacheKey)
+  }
+}
+
+const profileCache = new Map<string, { value: UserProfile | null; expiresAt: number }>()
+const profileRequests = new Map<string, Promise<UserProfile | null>>()
+
+export function watchConversations(uid: string, callback: (items: Conversation[]) => void): Unsubscribe | undefined {
+  if (isSupabaseChatEnabled()) return watchSupabaseConversations(uid, (items) => {
+    void Promise.all(items.map(async (item) => {
+      if (item.type !== 'direct') return item
+      const otherUid = item.memberIds.find(memberId => memberId !== uid)
+      // Supabase is the primary profile store for chat. Fall back to Firestore
+      // inside getUserProfile so avatars/names saved on either side appear in
+      // the conversation list and chat header.
+      const profile = otherUid ? await getUserProfile(otherUid) : null
+      if (!profile) return item
+      const lastSeen = profile.lastSeen || item.lastSeen
+      const lastSeenMs = lastSeen?.toMillis() || 0
+      const active = profile.activeStatus !== false && lastSeenMs > 0 && Date.now() - lastSeenMs < 90000
+      return { ...item, name: profile.displayName || item.name, username: profile.username || item.username, photoURL: profile.photoURL || item.photoURL, lastSeen, active }
+    })).then(enriched => callback(enriched)).catch(() => callback(items))
+  })
+  if (!db) return undefined
+  const q = query(collection(db, 'conversations'), where('memberIds', 'array-contains', uid), limit(50))
+  return onSnapshot(q, snapshot => {
+    Promise.all(snapshot.docs.map(async item => {
+      const data = item.data()
+      const memberIds = Array.isArray(data.memberIds) ? data.memberIds.map(String) : []
+      const otherId = memberIds.find(memberId => memberId !== uid)
+      const other = otherId ? await getUserProfile(otherId) : null
+      const name = String(data.type || '') === 'group' ? String(data.name || 'Group chat') : (other?.displayName || String(data.name || 'Conversation'))
+      const lastSeen = other?.lastSeen?.toMillis() || 0
+      const lastMessageAt = asTimestamp(data.lastMessageAt)
+      const readAt = data.readAt && typeof data.readAt === 'object' ? data.readAt as Record<string, unknown> : {}
+      const otherReadAt = otherId ? asTimestamp(readAt[otherId]) : null
+      return { id: item.id, name, memberIds, type: data.type === 'group' ? ('group' as const) : ('direct' as const), adminId: data.adminId ? String(data.adminId) : undefined, lastMessage: String(data.lastMessage || ''), lastSenderId: data.lastSenderId ? String(data.lastSenderId) : undefined, lastMessageAt, lastMessageSeen: Boolean(lastMessageAt && otherReadAt && otherReadAt.toMillis() >= lastMessageAt.toMillis()), createdAt: asTimestamp(data.createdAt), hiddenFor: Array.isArray(data.hiddenFor) ? data.hiddenFor.map(String) : [], avatar: initials(name), photoURL: data.type === 'group' ? String(data.photoURL || '') : (other?.photoURL || ''), active: other?.activeStatus !== false && Date.now() - lastSeen < 90000, lastSeen: other?.lastSeen || null, unreadCount: Number(data.unreadCounts?.[uid] || 0) }
+    })).then(items => callback(items.filter(item => !item.hiddenFor?.includes(uid)).sort((a, b) => ((b.lastMessageAt?.toMillis() || b.createdAt?.toMillis() || 0) - (a.lastMessageAt?.toMillis() || a.createdAt?.toMillis() || 0)))))
+  }, error => {
+    // A legacy Firestore listener must never become an unhandled rejection
+    // (for example while rules/auth are refreshing). Supabase remains the
+    // primary chat source when enabled, so keep the UI usable and retry on
+    // the next subscription instead of blanking the app.
+    console.warn('[chat] conversation listener unavailable', error)
+    callback([])
+  })
+}
+
+export function watchIncomingConversationEvents(uid: string, callback: (event: IncomingConversationEvent) => void): Unsubscribe | undefined {
+  if (isSupabaseChatEnabled()) return watchSupabaseIncomingConversationEvents(uid, callback)
+  return undefined
+}
+
+export function watchMessages(conversationId: string, uid: string, callback: (items: ChatMessage[]) => void): Unsubscribe | undefined {
+  if (isSupabaseChatEnabled()) return watchSupabaseMessages(conversationId, uid, callback)
+  if (!db) return undefined
+  let cutoff: Timestamp | null = null
+  let latest: ChatMessage[] = []
+  let active = true
+  const visible = () => {
+    const notHidden = latest.filter(item => !item.hiddenFor?.includes(uid))
+    return cutoff
+      ? notHidden.filter(item => Boolean(item.createdAt) && item.createdAt!.toMillis() > cutoff!.toMillis())
+      : notHidden
+  }
+  getDoc(doc(db, 'conversations', conversationId)).then(snapshot => {
+    cutoff = asTimestamp(snapshot.data()?.hiddenAt?.[uid])
+    if (active) callback(visible())
+  }).catch(() => undefined)
+  const q = query(collection(db, 'conversations', conversationId, 'messages'), orderBy('createdAt', 'desc'), limit(100))
+  const unsubscribe = onSnapshot(q, snapshot => { latest = snapshot.docs.map(item => { const data = item.data(); const sneak = data.sneak as Record<string, unknown> | undefined; return { id: item.id, text: String(data.text || ''), senderId: String(data.senderId || ''), createdAt: asTimestamp(data.createdAt), attachment: data.attachment ? { name: String(data.attachment.name || 'file'), url: String(data.attachment.url || ''), type: String(data.attachment.type || ''), size: Number(data.attachment.size || 0) } : null, sneak: sneak ? { recipientId: String(sneak.recipientId || ''), state: (String(sneak.state || 'unopened') as SneakState), expiresAt: asTimestamp(sneak.expiresAt), consumedAt: asTimestamp(sneak.consumedAt) } : undefined, replyTo: data.replyTo ? { id: String(data.replyTo.id || ''), text: String(data.replyTo.text || ''), senderId: String(data.replyTo.senderId || '') } : null, seenBy: Array.isArray(data.seenBy) ? data.seenBy.map(String) : [], hiddenFor: Array.isArray(data.hiddenFor) ? data.hiddenFor.map(String) : [] } }).filter(item => !item.createdAt || Date.now() - item.createdAt.toMillis() <= 24 * 60 * 60 * 1000).sort((a, b) => (a.createdAt?.toMillis() || 0) - (b.createdAt?.toMillis() || 0)); if (active) callback(visible()) }, error => { console.warn('[chat] message listener unavailable', error); if (active) callback(visible()) })
+  return () => { active = false; unsubscribe() }
+}
+
+export async function sendMessage(conversationId: string, senderId: string, text: string, file?: File, replyTo?: ChatMessage | null) {
+  if (isSupabaseChatEnabled()) {
+    let attachment: ChatAttachment | null = null
+    if (file) {
+      const stored = await StorageManager.upload(file, { ownerId: senderId, originalName: file.name, mimeType: file.type, sizeBytes: file.size, conversationId })
+      attachment = { name: stored.originalName, url: stored.url, type: stored.mimeType, size: stored.sizeBytes }
+    }
+    await sendSupabaseMessage(conversationId, text, attachment, replyTo)
+    return
+  }
+  if (!db) return
+  const conversationRef = doc(db, 'conversations', conversationId)
+  const conversationSnapshot = await getDoc(conversationRef)
+  if (!conversationSnapshot.exists()) throw new Error('This conversation no longer exists.')
+  const conversationData = conversationSnapshot.data()
+  if (!(conversationData.memberIds || []).includes(senderId)) throw new Error('You are not a member of this conversation.')
+  if (conversationData.type === 'direct') {
+    const otherUid = (conversationData.memberIds || []).find((id: string) => id !== senderId)
+    if (otherUid && await isBlockedBetween(senderId, otherUid)) throw new Error('You cannot message this user.')
+  }
+  let attachment: ChatAttachment | null = null
+  if (file) {
+    const stored = await StorageManager.upload(file, { ownerId: senderId, originalName: file.name, mimeType: file.type, sizeBytes: file.size, conversationId })
+    attachment = { name: stored.originalName, url: stored.url, type: stored.mimeType, size: stored.sizeBytes }
+  }
+  const messageData: { text: string; senderId: string; createdAt: ReturnType<typeof serverTimestamp>; attachment?: ChatAttachment; replyTo?: { id: string; text: string; senderId: string } } = { text, senderId, createdAt: serverTimestamp() }
+  if (attachment) messageData.attachment = attachment
+  if (replyTo) messageData.replyTo = { id: replyTo.id, text: replyTo.text, senderId: replyTo.senderId }
+  await addDoc(collection(conversationRef, 'messages'), { ...messageData, seenBy: [senderId] })
+  const recipients = (conversationData.memberIds || []).filter((id: string) => id !== senderId)
+  const unreadUpdates = Object.fromEntries(recipients.map((id: string) => [`unreadCounts.${id}`, increment(1)]))
+  // Keep the send acknowledgement fast: message metadata and the bounded
+  // 30-message cleanup can complete independently after the write succeeds.
+  await Promise.all([
+    updateDoc(conversationRef, { lastMessage: attachment ? `📎 ${attachment.name}` : text, lastSenderId: senderId, lastMessageAt: serverTimestamp(), hiddenFor: [], ...unreadUpdates }),
+    getDocs(query(collection(conversationRef, 'messages'), orderBy('createdAt', 'desc'), limit(100))).then(async (overflow) => {
+      const cutoff = Date.now() - 24 * 60 * 60 * 1000
+      await Promise.all(overflow.docs.filter((item) => {
+        const createdAt = asTimestamp(item.data().createdAt)?.toMillis() || Date.now()
+        return createdAt < cutoff
+      }).map((item) => deleteDoc(item.ref)))
+    }),
+  ])
+}
+
+/** Creates a friend-only one-time photo message using the existing chat store. */
+export async function sendSneak(conversationId: string, senderId: string, recipientId: string, file: File) {
+  if (isSupabaseChatEnabled()) {
+    // Sneaks are small, one-time images. Keep this path independent from the
+    // optional media uploader so a missing storage service cannot leave Send
+    // Sneak stuck indefinitely.
+    const url = await new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result || '')); reader.onerror = () => reject(new Error('Could not read the Sneak image.')); reader.readAsDataURL(file) })
+    await sendSupabaseSneak(conversationId, recipientId, { name: 'sneak.jpg', url, type: file.type || 'image/jpeg', size: file.size })
+    return
+  }
+  if (!db) throw new Error('Chat is unavailable.')
+  const conversationRef = doc(db, 'conversations', conversationId)
+  const snapshot = await getDoc(conversationRef)
+  const data = snapshot.data()
+  if (!snapshot.exists() || data?.type !== 'direct' || !(data.memberIds || []).includes(senderId) || !(data.memberIds || []).includes(recipientId)) throw new Error('Sneaks can only be sent to a friend in a direct conversation.')
+  if (await isBlockedBetween(senderId, recipientId)) throw new Error('You cannot send a Sneak to this user.')
+  const stored = await StorageManager.upload(file, { ownerId: senderId, originalName: 'sneak.jpg', mimeType: file.type || 'image/jpeg', sizeBytes: file.size, conversationId })
+  const expiresAt = Timestamp.fromMillis(Date.now() + 24 * 60 * 60 * 1000)
+  await addDoc(collection(conversationRef, 'messages'), { text: 'Serving pixels', senderId, createdAt: serverTimestamp(), attachment: { name: 'sneak.jpg', url: stored.url, type: stored.mimeType, size: stored.sizeBytes }, sneak: { recipientId, state: 'unopened', expiresAt }, seenBy: [senderId] })
+  await updateDoc(conversationRef, { lastMessage: 'Sneak', lastSenderId: senderId, lastMessageAt: serverTimestamp(), hiddenFor: [] })
+}
+
+/** Atomically consumes a Sneak so refreshes and concurrent opens cannot reopen it. */
+export async function consumeSneak(conversationId: string, messageId: string, recipientId: string) {
+  if (isSupabaseChatEnabled()) return consumeSupabaseSneak(conversationId, messageId)
+  if (!db) throw new Error('Chat is unavailable.')
+  const firestore = db
+  return runTransaction(firestore, async (transaction) => {
+    const ref = doc(firestore, 'conversations', conversationId, 'messages', messageId)
+    const snapshot = await transaction.get(ref)
+    const data = snapshot.data(); const sneak = data?.sneak
+    if (!snapshot.exists() || !sneak || sneak.recipientId !== recipientId || sneak.state !== 'unopened') throw new Error('This Sneak has already been opened or expired.')
+    if (sneak.expiresAt?.toMillis && sneak.expiresAt.toMillis() <= Date.now()) { transaction.update(ref, { 'sneak.state': 'expired', 'sneak.consumedAt': serverTimestamp() }); throw new Error('This Sneak has expired.') }
+    transaction.update(ref, { 'sneak.state': 'consumed', 'sneak.consumedAt': serverTimestamp(), attachment: null })
+    return { url: String(data.attachment?.url || ''), type: String(data.attachment?.type || 'image/jpeg') }
+  })
+}
+
+export async function unsendMessage(conversationId: string, messageId: string) {
+  if (isSupabaseChatEnabled()) { await unsendSupabaseMessage(conversationId, messageId); return }
+  if (!db) return
+  await deleteDoc(doc(db, 'conversations', conversationId, 'messages', messageId))
+  const remaining = await getDocs(query(collection(db, 'conversations', conversationId, 'messages'), orderBy('createdAt', 'desc'), limit(1)))
+  const conversationRef = doc(db, 'conversations', conversationId)
+  if (remaining.empty) await updateDoc(conversationRef, { lastMessage: '', lastSenderId: null, lastMessageAt: null })
+  else {
+    const latest = remaining.docs[0].data()
+    await updateDoc(conversationRef, { lastMessage: String(latest.text || (latest.attachment ? `📎 ${latest.attachment.name || 'Attachment'}` : '')), lastSenderId: String(latest.senderId || ''), lastMessageAt: latest.createdAt || null })
+  }
+}
+
+export async function deleteMessageForMe(conversationId: string, messageId: string, uid: string) {
+  if (isSupabaseChatEnabled()) { await deleteSupabaseMessageForMe(conversationId, messageId); return }
+  if (!db) return
+  await updateDoc(doc(db, 'conversations', conversationId, 'messages', messageId), { hiddenFor: arrayUnion(uid) })
+}
+
+export async function deleteConversation(conversationId: string, uid: string) {
+  if (isSupabaseChatEnabled()) {
+    await deleteSupabaseConversation(conversationId)
+    return
+  }
+  if (!db) return
+  const ref = doc(db, 'conversations', conversationId); const snapshot = await getDoc(ref)
+  if (!snapshot.exists() || !(snapshot.data().memberIds || []).includes(uid)) throw new Error('You cannot delete this conversation.')
+  await updateDoc(ref, { hiddenFor: arrayUnion(uid), [`hiddenAt.${uid}`]: serverTimestamp() })
+}
+
+export async function markConversationRead(conversationId: string, uid: string) {
+  if (isSupabaseChatEnabled()) { await markSupabaseRead(conversationId); return }
+  if (!db) return
+  const conversationRef = doc(db, 'conversations', conversationId)
+  const snapshot = await getDocs(query(collection(conversationRef, 'messages'), orderBy('createdAt', 'desc'), limit(30)))
+  const unread = snapshot.docs.filter(item => !(item.data().seenBy || []).includes(uid))
+  for (let start = 0; start < unread.length; start += 450) {
+    const batch = writeBatch(db)
+    unread.slice(start, start + 450).forEach(item => batch.update(item.ref, { seenBy: arrayUnion(uid) }))
+    await batch.commit()
+  }
+  await updateDoc(conversationRef, { [`unreadCounts.${uid}`]: 0, [`readAt.${uid}`]: serverTimestamp() })
+}
+
+export async function touchPresence(uid: string, activeStatus: boolean) {
+  if (isSupabaseChatEnabled()) { await touchSupabasePresence(activeStatus); return }
+  if (!db) return
+  await updateDoc(doc(db, 'users', uid), { activeStatus, lastSeen: serverTimestamp() })
+}
+
+export async function findUsers(search: string, currentUid: string): Promise<UserProfile[]> {
+  if (!db || !search.trim()) return []
+  const term = search.trim().toLowerCase()
+  const snapshot = await getDocs(query(collection(db, 'users'), where('username', '>=', term), where('username', '<=', `${term}\uf8ff`), limit(12)))
+  const blocked = await listBlockedUsers(currentUid)
+  const blockedIds = new Set(blocked.map(item => item.blockedId))
+  return snapshot.docs.filter(item => {
+    if (item.id === currentUid || blockedIds.has(item.id)) return false
+    // Turning Discoverability off removes the profile from broad People/Discover
+    // results, but an exact username search still allows a friend request.
+    const username = String(item.data().username || '').toLowerCase()
+    return item.data().discoverable !== false || username === term
+  }).map(item => profileFromDoc(item.id, item.data()))
+}
+
+export async function getFriendship(uid: string, otherUid: string): Promise<'friends' | 'requested' | 'incoming' | 'none'> {
+  if (!db || !uid || !otherUid) return 'none'
+  const friendship = await getDoc(doc(db, 'friendships', [uid, otherUid].sort().join('_')))
+  if (friendship.exists() && friendship.data().status === 'accepted') return 'friends'
+  const outgoing = await getDoc(doc(db, 'friendRequests', `${uid}_${otherUid}`))
+  if (outgoing.exists() && outgoing.data().status === 'pending') return 'requested'
+  const incoming = await getDoc(doc(db, 'friendRequests', `${otherUid}_${uid}`))
+  if (incoming.exists() && incoming.data().status === 'pending') return 'incoming'
+  return 'none'
+}
+
+export async function listFriends(uid: string): Promise<UserProfile[]> {
+  if (!db) return []
+  const snapshot = await getDocs(query(collection(db, 'friendships'), where('memberIds', 'array-contains', uid), limit(100)))
+  const ids = snapshot.docs.filter(item => item.data().status === 'accepted').flatMap(item => (item.data().memberIds || []).map(String)).filter(id => id !== uid)
+  const profiles = await Promise.all([...new Set(ids)].map(id => getUserProfile(id)))
+  return profiles.filter((profile): profile is UserProfile => Boolean(profile))
+}
+
+export async function sendFriendRequest(fromUid: string, toUid: string) {
+  if (!db || fromUid === toUid) return
+  if (await isBlockedBetween(fromUid, toUid)) throw new Error('You cannot send a request to this user.')
+  const relationship = await getFriendship(fromUid, toUid)
+  if (relationship === 'friends') throw new Error('You are already friends.')
+  if (relationship === 'requested') throw new Error('Friend request already sent.')
+  if (relationship === 'incoming') throw new Error('This user already sent you a request. Open your requests to accept it.')
+  await setDoc(doc(db, 'friendRequests', `${fromUid}_${toUid}`), { fromUid, toUid, status: 'pending', createdAt: serverTimestamp() })
+  void notifySupabaseRemoteEvent('friend-request', [toUid], { requestId: `${fromUid}_${toUid}` }).catch(() => undefined)
+}
+
+export async function cancelFriendRequest(fromUid: string, toUid: string) {
+  if (!db) return
+  await deleteDoc(doc(db, 'friendRequests', `${fromUid}_${toUid}`))
+}
+
+export async function respondToFriendRequest(fromUid: string, toUid: string, accept: boolean) {
+  if (!db) return
+  if (await isBlockedBetween(fromUid, toUid)) throw new Error('This request is no longer available.')
+  const requestRef = doc(db, 'friendRequests', `${fromUid}_${toUid}`)
+  if (accept) {
+    const batch = writeBatch(db)
+    batch.update(requestRef, { status: 'accepted', respondedAt: serverTimestamp() })
+    batch.set(doc(db, 'friendships', [fromUid, toUid].sort().join('_')), { memberIds: [fromUid, toUid], status: 'accepted', createdAt: serverTimestamp() })
+    const conversationRef = doc(db, 'conversations', [fromUid, toUid].sort().join('_'))
+    const conversation = await getDoc(conversationRef)
+    if (!conversation.exists()) {
+      batch.set(conversationRef, { type: 'direct', memberIds: [fromUid, toUid], createdBy: toUid, lastMessage: '', lastMessageAt: null, createdAt: serverTimestamp() })
+    }
+    await batch.commit()
+  } else await updateDoc(requestRef, { status: 'declined', respondedAt: serverTimestamp() })
+}
+
+export function watchFriendRequests(uid: string, callback: (items: FriendRequest[]) => void): Unsubscribe | undefined {
+  if (!db) return undefined
+  let incoming: FriendRequest[] = []; let outgoing: FriendRequest[] = []
+  const emit = () => callback([...incoming, ...outgoing])
+  const incomingUnsub = onSnapshot(query(collection(db, 'friendRequests'), where('toUid', '==', uid), limit(50)), snapshot => { incoming = snapshot.docs.filter(item => item.data().status === 'pending').map(item => ({ id: item.id, fromUid: String(item.data().fromUid), toUid: String(item.data().toUid), status: 'pending', createdAt: asTimestamp(item.data().createdAt) })); emit() }, error => console.warn('[chat] incoming friend-request listener unavailable', error))
+  const outgoingUnsub = onSnapshot(query(collection(db, 'friendRequests'), where('fromUid', '==', uid), limit(50)), snapshot => { outgoing = snapshot.docs.filter(item => item.data().status === 'pending').map(item => ({ id: item.id, fromUid: String(item.data().fromUid), toUid: String(item.data().toUid), status: 'pending', createdAt: asTimestamp(item.data().createdAt) })); emit() }, error => console.warn('[chat] outgoing friend-request listener unavailable', error))
+  return () => { incomingUnsub(); outgoingUnsub() }
+}
+
+function profileFromDoc(uid: string, data: DocumentData): UserProfile { return { uid, displayName: String(data.displayName || 'Co-Chat member'), email: String(data.email || ''), username: String(data.username || ''), photoURL: String(data.photoURL || ''), bio: String(data.bio || ''), notificationsEnabled: data.notificationsEnabled !== false, discoverable: data.discoverable !== false, activeStatus: data.activeStatus !== false, hideTwittIdentity: data.hideTwittIdentity === true, theme: data.theme === 'light' ? 'light' : data.theme === 'dark' ? 'dark' : undefined, lastSeen: asTimestamp(data.lastSeen), profileComplete: data.profileComplete === true } }
+
+export async function saveTheme(uid: string, theme: 'light' | 'dark') {
+  if (!db || !uid) return
+  await setDoc(doc(db, 'users', uid), { theme, updatedAt: serverTimestamp() }, { merge: true })
+}
+
+export async function createConversation(uid: string, other: UserProfile) {
+  if (isSupabaseChatEnabled()) {
+    if (!uid || !other.uid || uid === other.uid) throw new Error('Choose another user to start a conversation.')
+    if (await isBlockedBetween(uid, other.uid)) throw new Error('You cannot message this user.')
+    return createDirect(other.uid, other.displayName || other.username)
+  }
+  if (!db) return ''
+  if (!uid || !other.uid || uid === other.uid) throw new Error('Choose another user to start a conversation.')
+  if (await isBlockedBetween(uid, other.uid)) throw new Error('You cannot message this user.')
+  const relationship = await getFriendship(uid, other.uid)
+  if (relationship !== 'friends') throw new Error('You can message this person after they accept your friend request.')
+  const id = [uid, other.uid].sort().join('_')
+  const ref = doc(db, 'conversations', id)
+  const existing = await getDoc(ref)
+  if (!existing.exists()) await setDoc(ref, { type: 'direct', name: other.displayName || other.username, memberIds: [uid, other.uid], createdBy: uid, lastMessage: '', lastMessageAt: serverTimestamp(), createdAt: serverTimestamp() })
+  else {
+    const data = existing.data()
+    const hiddenFor = Array.isArray(data.hiddenFor) ? data.hiddenFor.map(String) : []
+    if (hiddenFor.includes(uid)) {
+      const hiddenAt = data.hiddenAt && typeof data.hiddenAt === 'object' ? data.hiddenAt as Record<string, unknown> : {}
+      if (!hiddenAt[uid]) await updateDoc(ref, { [`hiddenAt.${uid}`]: serverTimestamp() })
+    }
+  }
+  return id
+}
+
+export async function createGroup(uid: string, name: string, members: UserProfile[]) {
+  if (isSupabaseChatEnabled()) {
+    const memberIds = [...new Set([uid, ...members.map(member => member.uid)])]
+    if (memberIds.length < 3) throw new Error('Choose at least two friends for a group.')
+    return createSupabaseGroup(name.trim() || 'New group', memberIds)
+  }
+  if (!db) return ''
+  const memberIds = [...new Set([uid, ...members.map(member => member.uid)])]
+  if (memberIds.length < 3) throw new Error('Choose at least two friends for a group.')
+  for (const member of members) if (await getFriendship(uid, member.uid) !== 'friends') throw new Error('Groups can only include your accepted friends.')
+  const ref = doc(collection(db, 'conversations'))
+  await setDoc(ref, { type: 'group', name: name.trim() || 'New group', memberIds, adminId: uid, lastMessage: '', lastMessageAt: serverTimestamp(), createdBy: uid, createdAt: serverTimestamp() })
+  return ref.id
+}
+
+export async function updateGroup(conversationId: string, uid: string, name: string, photoURL = '') {
+  if (isSupabaseChatEnabled()) { await updateSupabaseGroup(conversationId, name, photoURL); return }
+  if (!db) return
+  const ref = doc(db, 'conversations', conversationId); const snapshot = await getDoc(ref)
+  if (!snapshot.exists() || snapshot.data().adminId !== uid) throw new Error('Only the group admin can edit this group.')
+  await updateDoc(ref, { name: name.trim().slice(0, 80) || 'Group chat', ...(photoURL ? { photoURL } : {}) })
+}
+
+export async function removeGroupMember(conversationId: string, uid: string, memberUid: string) {
+  if (isSupabaseChatEnabled()) { await removeSupabaseGroupMember(conversationId, memberUid); return }
+  if (!db) return
+  const ref = doc(db, 'conversations', conversationId); const snapshot = await getDoc(ref); const data = snapshot.data()
+  if (!snapshot.exists() || data?.adminId !== uid) throw new Error('Only the group admin can remove members.')
+  await updateDoc(ref, { memberIds: (data.memberIds || []).filter((id: string) => id !== memberUid) })
+}
+
+export async function leaveGroup(conversationId: string, uid: string) {
+  if (isSupabaseChatEnabled()) { await leaveSupabaseGroup(conversationId); return }
+  if (!db) return
+  const ref = doc(db, 'conversations', conversationId); const snapshot = await getDoc(ref); const data = snapshot.data()
+  if (!snapshot.exists() || data?.type !== 'group' || !Array.isArray(data.memberIds) || !data.memberIds.includes(uid)) throw new Error('You are not a member of this group.')
+  const memberIds = data.memberIds.filter((id: string) => id !== uid)
+  if (data.adminId === uid && memberIds.length > 0) throw new Error('The admin can leave only after all other members have left.')
+  if (data.adminId === uid) await deleteDoc(ref)
+  else await updateDoc(ref, { memberIds })
+}
+
+export async function addGroupMembers(conversationId: string, uid: string, members: UserProfile[]) {
+  if (isSupabaseChatEnabled()) { if (members.length) await addSupabaseGroupMembers(conversationId, members.map(member => member.uid)); return }
+  if (!db || !members.length) return
+  const ref = doc(db, 'conversations', conversationId); const snapshot = await getDoc(ref); const data = snapshot.data()
+  if (!snapshot.exists() || data?.type !== 'group' || !Array.isArray(data.memberIds) || !data.memberIds.includes(uid)) throw new Error('Only group members can add members.')
+  const current = Array.isArray(data.memberIds) ? data.memberIds.map(String) : []
+  const additions = [...new Set(members.map(member => member.uid))].filter(id => !current.includes(id) && id !== uid)
+  for (const member of members) if (additions.includes(member.uid) && await getFriendship(uid, member.uid) !== 'friends') throw new Error('You can only add accepted friends.')
+  if (additions.length) await updateDoc(ref, { memberIds: [...current, ...additions] })
+}
+
+export function watchStories(callback: (items: Story[]) => void): Unsubscribe | undefined {
+  if (!db) return undefined
+  const q = query(collection(db, 'stories'), where('expiresAt', '>', Timestamp.now()), limit(50))
+  return onSnapshot(q, snapshot => callback(snapshot.docs.map(item => { const data = item.data(); return { id: item.id, uid: String(data.uid || ''), displayName: String(data.displayName || 'Co-Chat member'), text: String(data.text || ''), createdAt: asTimestamp(data.createdAt), expiresAt: asTimestamp(data.expiresAt) } }).sort((a, b) => (a.expiresAt?.toMillis() || 0) - (b.expiresAt?.toMillis() || 0))), error => console.warn('[social] story listener unavailable', error))
+}
+
+export async function createStory(uid: string, displayName: string, text: string) {
+  if (!db) return
+  const expires = Timestamp.fromMillis(Date.now() + 24 * 60 * 60 * 1000)
+  await addDoc(collection(db, 'stories'), { uid, displayName, text, createdAt: serverTimestamp(), expiresAt: expires })
+}
+
+export async function saveProfile(uid: string, values: Pick<UserProfile, 'displayName' | 'username' | 'bio' | 'notificationsEnabled' | 'discoverable' | 'hideTwittIdentity'> & { activeStatus?: boolean; photoURL?: string }) {
+  if (isSupabaseChatEnabled()) {
+    const current = await getSupabaseProfile(uid)
+    const username = normalizeUsername(values.username)
+    if (username.length < 3) throw new Error('Username must be at least 3 characters.')
+    await upsertSupabaseProfile(uid, { ...values, username, email: current?.email || auth?.currentUser?.email || '', photoURL: values.photoURL || current?.photoURL || auth?.currentUser?.photoURL || '' })
+    // Keep the legacy profile document aligned as well. It is still used as
+    // the fallback for profile display and may contain the user's chosen
+    // username from before the Supabase migration.
+    if (db) {
+      try {
+        await setDoc(doc(db, 'users', uid), {
+          displayName: values.displayName.trim(),
+          email: current?.email || auth?.currentUser?.email || '',
+          username,
+          photoURL: values.photoURL || current?.photoURL || auth?.currentUser?.photoURL || '',
+          bio: String(values.bio || '').trim().slice(0, 280),
+          notificationsEnabled: values.notificationsEnabled,
+          discoverable: values.discoverable,
+          activeStatus: values.activeStatus !== false,
+          hideTwittIdentity: values.hideTwittIdentity === true,
+          profileComplete: true,
+          updatedAt: serverTimestamp(),
+        }, { merge: true })
+      } catch {
+        // Supabase remains the primary profile store while the legacy mirror
+        // is best-effort (for example, when Firestore rules are unavailable).
+      }
+    }
+    return
+  }
+  if (!db) throw new Error('Profile service is unavailable. Check your connection and try again.')
+  const userRef = doc(db, 'users', uid)
+  const current = await getDoc(userRef)
+  const oldUsername = current.exists() ? normalizeUsername(String(current.data().username || '')) : ''
+  const username = normalizeUsername(values.username)
+  if (username.length < 3) throw new Error('Username must be at least 3 characters.')
+  await reserveUsername(uid, username, uid)
+  // Upsert so a fresh Android/WebView session can finish setup even if the
+  // initial profile write was interrupted or the document does not exist yet.
+  await setDoc(userRef, { displayName: values.displayName.trim(), email: current.exists() ? String(current.data().email || '') : (auth?.currentUser?.email || ''), username, photoURL: values.photoURL || (current.exists() ? String(current.data().photoURL || auth?.currentUser?.photoURL || '') : (auth?.currentUser?.photoURL || '')), bio: String(values.bio || '').trim().slice(0, 280), notificationsEnabled: values.notificationsEnabled, discoverable: values.discoverable, activeStatus: values.activeStatus !== false, hideTwittIdentity: values.hideTwittIdentity === true, profileComplete: true, updatedAt: serverTimestamp() }, { merge: true })
+  if (oldUsername && oldUsername !== username) {
+    const oldRef = doc(db, 'usernames', oldUsername)
+    const old = await getDoc(oldRef)
+    if (old.exists() && old.data().uid === uid) await deleteDoc(oldRef)
+  }
+}
+
+export function watchCalls(uid: string, callback: (items: CallRecord[]) => void): Unsubscribe | undefined {
+  if (!db) return undefined
+  return onSnapshot(query(collection(db, 'calls'), where('memberIds', 'array-contains', uid), limit(50)), snapshot => callback(snapshot.docs.map(item => { const data = item.data(); const type: CallRecord['type'] = data.type === 'video' ? 'video' : 'audio'; return { id: item.id, type, status: String(data.status || 'completed'), memberIds: Array.isArray(data.memberIds) ? data.memberIds.map(String) : [], callerId: String(data.callerId || ''), calleeId: String(data.calleeId || ''), groupId: data.groupId ? String(data.groupId) : undefined, groupName: data.groupName ? String(data.groupName) : undefined, joinedIds: Array.isArray(data.joinedIds) ? data.joinedIds.map(String) : [], leftIds: Array.isArray(data.leftIds) ? data.leftIds.map(String) : [], createdAt: asTimestamp(data.createdAt) } }).sort((a, b) => (b.createdAt?.toMillis() || 0) - (a.createdAt?.toMillis() || 0))), error => console.warn('[calls] listener unavailable', error))
+}
+
+export async function createCall(memberIds: string[], type: 'audio' | 'video', initiatorId?: string, group?: { id: string; name: string }) {
+  if (!db) return
+  const unique = [...new Set(memberIds)].sort()
+  if (group) {
+    if (unique.length < 3) throw new Error('A group call needs at least three members.')
+    if (!initiatorId || !unique.includes(initiatorId)) throw new Error('Only a group member can start this call.')
+    const callId = `group_${group.id}_${Date.now()}_${initiatorId}`
+    const callRef = doc(db, 'calls', callId)
+    await setDoc(callRef, { type, callerId: initiatorId, memberIds: unique, groupId: group.id, groupName: group.name, joinedIds: [initiatorId], status: 'ringing', createdAt: serverTimestamp() })
+    void notifySupabaseRemoteEvent('call', unique.filter((uid) => uid !== initiatorId), { callId, callType: type, groupId: group.id, groupName: group.name }).catch(() => undefined)
+    return callId
+  }
+  if (unique.length !== 2) throw new Error('Calls are available between two people only.')
+  const callerId = initiatorId && unique.includes(initiatorId) ? initiatorId : unique[0]; const calleeId = unique.find(id => id !== callerId) || unique[1]
+  if (await isBlockedBetween(callerId, calleeId)) throw new Error('You cannot call this user.')
+  if (await getFriendship(callerId, calleeId) !== 'friends') throw new Error('You can call this person after becoming friends.')
+  const callId = unique.slice().sort().join('_')
+  const callRef = doc(db, 'calls', callId)
+  await runTransaction(db, async transaction => {
+    const existing = await transaction.get(callRef)
+    if (existing.exists() && ['ringing', 'connected'].includes(String(existing.data().status || ''))) {
+      throw new Error('This conversation already has an active call.')
+    }
+    transaction.set(callRef, { memberIds: unique, callerId, calleeId, type, status: 'ringing', createdAt: serverTimestamp(), callerCandidates: [], calleeCandidates: [] })
+  })
+  void notifySupabaseRemoteEvent('call', [calleeId], { callId, callType: type }).catch(() => undefined)
+  return callId
+}
+
+export async function declineCall(callId: string) {
+  if (!db) return
+  await updateDoc(doc(db, 'calls', callId), { status: 'declined', endedAt: serverTimestamp() })
+}

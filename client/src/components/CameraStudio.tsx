@@ -1,0 +1,474 @@
+import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
+import { createPortal } from "react-dom";
+
+export type CameraFilter = "none" | "enhance" | "golden" | "cool" | "mono" | "retro" | "dreamy" | "cinematic" | "vivid" | "portrait" | "night" | "vhs" | "y2k" | "pastel" | "glow";
+export type CameraLens = "natural" | "puppy" | "cat" | "eyes" | "hearts" | "sunglasses" | "crown" | "particles" | "confetti";
+export type CameraFacing = "user" | "environment";
+
+// This is deliberately presentation-only. Browser video frames are always
+// captured from their source pixels, never from the CSS-mirrored preview.
+export function cameraMirroringPolicy(facing: CameraFacing, mirrorFrontPreview: boolean) {
+  const mirror = facing === "user" && mirrorFrontPreview;
+  return { mirrorPreview: mirror, mirrorSavedImage: mirror };
+}
+
+export const cameraFilterOptions: Array<{ id: CameraFilter; label: string; icon: string; category: "Natural" | "Portrait" | "Cinematic" }> = [
+  { id: "none", label: "Natural", icon: "◉", category: "Natural" },
+  { id: "enhance", label: "Enhanced", icon: "✦", category: "Natural" },
+  { id: "golden", label: "Golden hour", icon: "☀", category: "Portrait" },
+  { id: "cinematic", label: "Cinematic", icon: "▰", category: "Cinematic" },
+  { id: "glow", label: "Soft glow", icon: "✧", category: "Portrait" },
+];
+
+export const cameraFilterCss: Record<CameraFilter, string> = {
+  none: "none",
+  enhance: "brightness(1.06) contrast(1.12) saturate(1.14)",
+  golden: "sepia(.25) saturate(1.25) contrast(1.04) brightness(1.04)",
+  cool: "hue-rotate(165deg) saturate(1.15) contrast(1.04)",
+  mono: "grayscale(1) contrast(1.12)",
+  retro: "sepia(.42) saturate(.82) contrast(1.12) brightness(1.04)",
+  dreamy: "brightness(1.06) saturate(1.08) contrast(.95)",
+  cinematic: "contrast(1.18) saturate(.9) brightness(.98)",
+  vivid: "saturate(1.42) contrast(1.08)",
+  portrait: "brightness(1.03) saturate(1.06) contrast(.96)",
+  night: "brightness(1.16) contrast(1.06) saturate(.9) hue-rotate(8deg)",
+  vhs: "contrast(1.08) saturate(.82) sepia(.18) hue-rotate(342deg)",
+  y2k: "brightness(1.08) saturate(1.35) contrast(.96) hue-rotate(320deg)",
+  pastel: "brightness(1.08) saturate(.82) contrast(.9) sepia(.08)",
+  glow: "brightness(1.07) saturate(1.08) contrast(.9)",
+};
+
+export const cameraLensOptions: Array<{ id: CameraLens; label: string; icon: string; description: string; ar: boolean }> = [
+  { id: "natural", label: "Natural", icon: "◉", description: "Clean camera", ar: false },
+  { id: "puppy", label: "Puppy", icon: "🐶", description: "Face-tracked ears", ar: true },
+  { id: "cat", label: "Cat", icon: "🐱", description: "Whiskers and ears", ar: true },
+  { id: "eyes", label: "Big eyes", icon: "👀", description: "Tracked eye effect", ar: true },
+  { id: "hearts", label: "Hearts", icon: "💗", description: "Follow your face", ar: true },
+  { id: "sunglasses", label: "Shades", icon: "🕶", description: "Face-attached shades", ar: true },
+  { id: "crown", label: "Sparkle crown", icon: "✦", description: "Crown follows head", ar: true },
+  { id: "particles", label: "Particles", icon: "✧", description: "Ambient particles", ar: false },
+  { id: "confetti", label: "Confetti", icon: "🎉", description: "Animated scene effect", ar: false },
+];
+
+const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
+
+export function cameraFilterStyle(filter: CameraFilter, intensity: number) {
+  const amount = clamp(intensity, 0, 1);
+  if (filter === "none") return "none";
+  const base = cameraFilterCss[filter];
+  if (amount >= 0.98) return base;
+  const scale = (value: number) => 1 + (value - 1) * amount;
+  switch (filter) {
+    case "enhance": return `brightness(${scale(1.06)}) contrast(${scale(1.12)}) saturate(${scale(1.14)})`;
+    case "golden": return `sepia(${(0.25 * amount).toFixed(2)}) saturate(${scale(1.25)}) contrast(${scale(1.04)}) brightness(${scale(1.04)})`;
+    case "cool": return `hue-rotate(${Math.round(165 * amount)}deg) saturate(${scale(1.15)}) contrast(${scale(1.04)})`;
+    case "mono": return `grayscale(${amount.toFixed(2)}) contrast(${scale(1.12)})`;
+    case "retro": return `sepia(${(0.42 * amount).toFixed(2)}) saturate(${1 - (1 - .82) * amount}) contrast(${scale(1.12)}) brightness(${scale(1.04)})`;
+    case "dreamy": return `brightness(${scale(1.06)}) saturate(${scale(1.08)}) contrast(${1 - .05 * amount})`;
+    case "cinematic": return `contrast(${scale(1.18)}) saturate(${1 - .1 * amount}) brightness(${1 - .02 * amount})`;
+    case "vivid": return `saturate(${scale(1.42)}) contrast(${scale(1.08)})`;
+    case "portrait": return `brightness(${scale(1.03)}) saturate(${scale(1.06)}) contrast(${1 - .04 * amount})`;
+    case "night": return `brightness(${scale(1.16)}) contrast(${scale(1.06)}) saturate(${1 - .1 * amount}) hue-rotate(${Math.round(8 * amount)}deg)`;
+    case "vhs": return `contrast(${scale(1.08)}) saturate(${1 - .18 * amount}) sepia(${(.18 * amount).toFixed(2)}) hue-rotate(${Math.round(-18 * amount)}deg)`;
+    case "y2k": return `brightness(${scale(1.08)}) saturate(${scale(1.35)}) contrast(${1 - .04 * amount}) hue-rotate(${Math.round(320 * amount)}deg)`;
+    case "pastel": return `brightness(${scale(1.08)}) saturate(${1 - .18 * amount}) contrast(${1 - .1 * amount}) sepia(${(.08 * amount).toFixed(2)})`;
+    case "glow": return `brightness(${scale(1.07)}) saturate(${scale(1.08)}) contrast(${1 - .1 * amount})`;
+    default: return base;
+  }
+}
+
+async function loadImage(dataUrl: string) {
+  const image = new Image();
+  image.src = dataUrl;
+  await new Promise<void>((resolve, reject) => {
+    image.onload = () => resolve();
+    image.onerror = () => reject(new Error("Could not process the camera photo."));
+  });
+  return image;
+}
+
+export async function processCameraDataUrl(dataUrl: string, filter: CameraFilter, intensity = 1, mirrorSavedImage = false) {
+  const image = await loadImage(dataUrl);
+  const canvas = document.createElement("canvas");
+  canvas.width = image.naturalWidth || image.width;
+  canvas.height = image.naturalHeight || image.height;
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("Camera filters are unavailable on this device.");
+  // The camera source is the single orientation authority. Do not use a
+  // Apply the explicit product policy exactly once to the saved render.
+  context.save();
+  context.setTransform(1, 0, 0, 1, 0, 0);
+  if (mirrorSavedImage) { context.translate(canvas.width, 0); context.scale(-1, 1); }
+  context.filter = cameraFilterStyle(filter, intensity);
+  context.drawImage(image, 0, 0, canvas.width, canvas.height);
+  context.restore();
+  const amount = clamp(intensity, 0, 1);
+  if (filter === "enhance") {
+    context.globalAlpha = 0.06 * amount;
+    context.fillStyle = "#fff";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.globalAlpha = 1;
+  }
+  if (filter === "golden") {
+    const gradient = context.createLinearGradient(0, 0, canvas.width, canvas.height);
+    gradient.addColorStop(0, `rgba(255,190,90,${0.16 * amount})`);
+    gradient.addColorStop(1, `rgba(255,102,52,${0.05 * amount})`);
+    context.fillStyle = gradient;
+    context.fillRect(0, 0, canvas.width, canvas.height);
+  }
+  if (filter === "dreamy") {
+    context.globalAlpha = 0.12 * amount;
+    context.fillStyle = "#f7eaff";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.globalAlpha = 1;
+  }
+  if (filter === "retro") {
+    const gradient = context.createRadialGradient(canvas.width / 2, canvas.height / 2, canvas.width * .15, canvas.width / 2, canvas.height / 2, canvas.width * .7);
+    gradient.addColorStop(0, "rgba(0,0,0,0)");
+    gradient.addColorStop(1, `rgba(15,8,2,${0.26 * amount})`);
+    context.fillStyle = gradient;
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.globalAlpha = 0.07 * amount;
+    context.fillStyle = "#fff";
+    const grainCount = Math.min(1800, Math.round(canvas.width * canvas.height / 9000));
+    for (let index = 0; index < grainCount; index += 1) context.fillRect(Math.random() * canvas.width, Math.random() * canvas.height, 1, 1);
+    context.globalAlpha = 1;
+  }
+  if (filter === "cinematic") {
+    const gradient = context.createRadialGradient(canvas.width / 2, canvas.height / 2, canvas.width * .25, canvas.width / 2, canvas.height / 2, canvas.width * .78);
+    gradient.addColorStop(0, "rgba(0,0,0,0)");
+    gradient.addColorStop(1, `rgba(0,0,0,${0.28 * amount})`);
+    context.fillStyle = gradient;
+    context.fillRect(0, 0, canvas.width, canvas.height);
+  }
+  if (filter === "night") {
+    context.globalAlpha = .12 * amount;
+    context.fillStyle = "#243e78";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.globalAlpha = 1;
+  }
+  return canvas.toDataURL("image/jpeg", .92);
+}
+
+export async function cameraDataUrlToFile(dataUrl: string, filter: CameraFilter, intensity = 1, mirrorSavedImage = false) {
+  const processed = await processCameraDataUrl(dataUrl, filter, intensity, mirrorSavedImage);
+  const image = await loadImage(processed);
+  const sourceBlob = await (await fetch(processed)).blob();
+  const canvas = document.createElement("canvas");
+  // Sneaks are sent inline through the chat API. A bounded render keeps the
+  // request responsive on mobile and avoids spending extra function time on
+  // very large camera frames while preserving a sharp 4:3/16:9 preview.
+  const maxDimension = 1440;
+  const scale = Math.min(1, maxDimension / Math.max(image.width, image.height));
+  canvas.width = Math.max(1, Math.round(image.width * scale));
+  canvas.height = Math.max(1, Math.round(image.height * scale));
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("Could not prepare the camera image.");
+  context.drawImage(image, 0, 0, canvas.width, canvas.height);
+  const blob = await new Promise<Blob>((resolve) => canvas.toBlob((value) => resolve(value || sourceBlob), "image/jpeg", .84));
+  return new File([blob], "co-chat-camera.jpg", { type: "image/jpeg" });
+}
+
+type FaceBox = { x: number; y: number; width: number; height: number };
+type FaceDetectorLike = { detect: (source: HTMLVideoElement) => Promise<Array<{ boundingBox: FaceBox }>> };
+type FaceDetectorConstructor = new (options?: { maxDetectedFaces?: number; fastMode?: boolean }) => FaceDetectorLike;
+
+function readFaceDetector() {
+  return (window as Window & { FaceDetector?: FaceDetectorConstructor }).FaceDetector;
+}
+
+function smoothFace(previous: FaceBox | null, next: FaceBox) {
+  if (!previous) return next;
+  const mix = .34;
+  return { x: previous.x + (next.x - previous.x) * mix, y: previous.y + (next.y - previous.y) * mix, width: previous.width + (next.width - previous.width) * mix, height: previous.height + (next.height - previous.height) * mix };
+}
+
+export function CameraStudio({ isOpen, onClose, onCapture, onSave, onSneak, onError, onNativeFallback }: {
+  isOpen: boolean;
+  onClose: () => void;
+  onCapture: (capture: { dataUrl: string; filter: CameraFilter; intensity: number }) => void;
+  onSave?: (capture: { dataUrl: string; filter: CameraFilter; intensity: number }) => void;
+  onSneak?: (capture: { dataUrl: string; filter: CameraFilter; intensity: number }) => void;
+  onError: (message: string) => void;
+  onNativeFallback?: () => void;
+}) {
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const activeDeviceIdRef = useRef<string | null>(null);
+  const activeDeviceLabelRef = useRef<string | null>(null);
+  const timerRef = useRef<number | null>(null);
+  const inferenceRef = useRef<number | null>(null);
+  const faceRef = useRef<FaceBox | null>(null);
+  // Start with the front camera; Flip is reserved for switching to a real
+  // rear camera and never acts as a mirror toggle.
+  const [facing, setFacing] = useState<CameraFacing>("user");
+  const [activeFacing, setActiveFacing] = useState<CameraFacing>("user");
+  const [filter, setFilter] = useState<CameraFilter>("none");
+  const [intensity, setIntensity] = useState(0.85);
+  const [lens, setLens] = useState<CameraLens>("natural");
+  const [timer, setTimer] = useState<0 | 3 | 10>(0);
+  const [grid, setGrid] = useState(false);
+  // Co Chat uses one natural orientation everywhere, including the live
+  // preview. This prevents the preview from appearing to flip at capture.
+  const [mirrorFrontPreview, setMirrorFrontPreview] = useState(true);
+  const [torch, setTorch] = useState(false);
+  const [torchSupported, setTorchSupported] = useState(false);
+  const [zoom, setZoom] = useState(1);
+  const [zoomRange, setZoomRange] = useState({ min: 1, max: 1, step: .1 });
+  const [captured, setCaptured] = useState<string | null>(null);
+  const [capturedPreview, setCapturedPreview] = useState<string | null>(null);
+  const [countdown, setCountdown] = useState<number | null>(null);
+  const [flash, setFlash] = useState(false);
+  const [cameraLoading, setCameraLoading] = useState(true);
+  const [cameraMessage, setCameraMessage] = useState("");
+  const [retryToken, setRetryToken] = useState(0);
+  const [face, setFace] = useState<FaceBox | null>(null);
+  const [trackingAvailable, setTrackingAvailable] = useState(false);
+  const [dockCategory, setDockCategory] = useState<"popular" | "lenses" | "looks" | "fx">("popular");
+  const selectedLens = useMemo(() => cameraLensOptions.find((option) => option.id === lens) || cameraLensOptions[0], [lens]);
+  const popularLooks = cameraFilterOptions.slice(0, 5);
+  const popularLenses = cameraLensOptions.slice(0, 5);
+
+  const stopStream = () => {
+    streamRef.current?.getTracks().forEach((track) => track.stop());
+    streamRef.current = null;
+    if (videoRef.current) videoRef.current.srcObject = null;
+  };
+
+  useEffect(() => {
+    if (!isOpen) return undefined;
+    let active = true;
+    setCameraLoading(true);
+    setCameraMessage("");
+    const open = async () => {
+      if (!navigator.mediaDevices?.getUserMedia) throw new Error("This browser does not support live camera access. Use a current browser over HTTPS.");
+      stopStream();
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { exact: facing }, width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30, max: 60 } }, audio: false });
+      if (!active) { stream.getTracks().forEach((track) => track.stop()); return; }
+      streamRef.current = stream;
+      const track = stream.getVideoTracks()[0];
+      const settings = track?.getSettings?.();
+      const deviceId = settings?.deviceId || null;
+      const deviceLabel = track?.label || null;
+      // Some desktop browsers expose multiple logical inputs but return the
+      // same physical webcam for both facingMode values. Never turn that into
+      // a mirror-only “flip”; keep the current front camera instead.
+      const samePhysicalCamera = (activeDeviceIdRef.current && deviceId && activeDeviceIdRef.current === deviceId)
+        || (activeDeviceLabelRef.current && deviceLabel && activeDeviceLabelRef.current === deviceLabel);
+      if (facing === "environment" && samePhysicalCamera) {
+        stream.getTracks().forEach((item) => item.stop());
+        streamRef.current = null;
+        setFacing("user");
+        setCameraMessage("This device has no separate rear camera, so Flip stays on the front camera.");
+        return;
+      }
+      activeDeviceIdRef.current = deviceId;
+      activeDeviceLabelRef.current = deviceLabel;
+      const availableCameras = (await navigator.mediaDevices.enumerateDevices().catch(() => [] as MediaDeviceInfo[])).filter((device) => device.kind === "videoinput");
+      if (availableCameras.length < 2 && facing === "environment") setFacing("user");
+      const capabilities = track?.getCapabilities?.() as MediaTrackCapabilities & { torch?: boolean; zoom?: { min: number; max: number; step?: number } } | undefined;
+      setTorchSupported(Boolean(capabilities?.torch));
+      if (capabilities?.zoom) { setZoomRange({ min: capabilities.zoom.min, max: Math.min(4, capabilities.zoom.max), step: capabilities.zoom.step || .1 }); setZoom(capabilities.zoom.min); }
+      else { setZoomRange({ min: 1, max: 1, step: .1 }); setZoom(1); }
+      setTorch(false);
+      if (videoRef.current) { videoRef.current.srcObject = stream; await videoRef.current.play().catch(() => undefined); }
+      // Orientation policy follows the stream that actually started, not the
+      // requested facing mode while a switch is still in flight.
+      if (active) setActiveFacing(facing);
+      if (active) setCameraLoading(false);
+    };
+    open().catch((error) => {
+      if (!active) return;
+      if (facing === "environment" && error instanceof DOMException && error.name === "OverconstrainedError") {
+        setFacing("user");
+        setCameraLoading(false);
+        setCameraMessage("This device has no compatible rear camera, so Flip stays on the front camera.");
+        return;
+      }
+      const message = error instanceof DOMException && (error.name === "NotReadableError" || error.name === "AbortError") ? "Camera is already in use by another app or browser tab." : error instanceof DOMException && (error.name === "NotAllowedError" || error.name === "SecurityError") ? "Camera permission is blocked. Allow camera access, then try again." : error instanceof Error ? error.message : "Could not open the camera.";
+      setCameraLoading(false);
+      setCameraMessage(message);
+      onError(message);
+      if (onNativeFallback && /support|permission|blocked|available/i.test(message)) { onClose(); onNativeFallback(); }
+    });
+    return () => { active = false; stopStream(); if (timerRef.current) window.clearTimeout(timerRef.current); if (inferenceRef.current) window.cancelAnimationFrame(inferenceRef.current); };
+  }, [isOpen, facing, retryToken]);
+
+  useEffect(() => {
+    if (!isOpen) { activeDeviceIdRef.current = null; activeDeviceLabelRef.current = null; return; }
+    // A reopened studio is a fresh capture session; no prior frame or
+    // orientation state can leak into it.
+    setCaptured(null);
+    setCapturedPreview(null);
+    setFacing("user");
+    setActiveFacing("user");
+    setMirrorFrontPreview(true);
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (!isOpen || captured || !streamRef.current || !videoRef.current) return;
+    videoRef.current.srcObject = streamRef.current;
+    void videoRef.current.play().catch(() => undefined);
+    setCameraMessage("");
+    setCameraLoading(false);
+    // Mirroring is derived from the active camera, never from a Flip click.
+  }, [isOpen, captured, facing]);
+
+  useEffect(() => {
+    if (!isOpen || !videoRef.current) return undefined;
+    const Detector = readFaceDetector();
+    if (!selectedLens.ar) { setTrackingAvailable(false); setFace(null); return undefined; }
+    // FaceDetector is still unavailable in several Chromium/Android WebViews.
+    // Keep AR lenses functional there with a centered framing guide instead of
+    // hiding the lens or presenting a dead-end warning.
+    if (!Detector) {
+      const video = videoRef.current;
+      const applyFallback = () => {
+        const width = video?.videoWidth || 640;
+        const height = video?.videoHeight || 480;
+        const fallback = { x: width * .25, y: height * .14, width: width * .5, height: height * .68 };
+        faceRef.current = fallback;
+        setFace(fallback);
+      };
+      applyFallback();
+      video?.addEventListener("loadedmetadata", applyFallback, { once: true });
+      setTrackingAvailable(true);
+      return () => { video?.removeEventListener("loadedmetadata", applyFallback); faceRef.current = null; setFace(null); };
+    }
+    let active = true;
+    let detector: FaceDetectorLike;
+    try { detector = new Detector({ maxDetectedFaces: 1, fastMode: true }); } catch { setTrackingAvailable(false); return undefined; }
+    setTrackingAvailable(true);
+    const detect = async () => {
+      if (!active || !videoRef.current || videoRef.current.readyState < 2) return;
+      try {
+        const faces = await detector.detect(videoRef.current);
+        const next = faces[0]?.boundingBox;
+        if (next) { faceRef.current = smoothFace(faceRef.current, next); setFace(faceRef.current); }
+        else { faceRef.current = null; setFace(null); }
+      } catch { setTrackingAvailable(false); }
+    };
+    let last = 0;
+    const frame = (now: number) => { if (!active) return; if (now - last > 120) { last = now; void detect(); } inferenceRef.current = window.requestAnimationFrame(frame); };
+    inferenceRef.current = window.requestAnimationFrame(frame);
+    return () => { active = false; if (inferenceRef.current) window.cancelAnimationFrame(inferenceRef.current); faceRef.current = null; setFace(null); };
+  }, [isOpen, selectedLens.ar]);
+
+  useEffect(() => {
+    if (!captured) { setCapturedPreview(null); return; }
+    let active = true;
+    const { mirrorSavedImage } = cameraMirroringPolicy(activeFacing, mirrorFrontPreview);
+    processCameraDataUrl(captured, filter, intensity, mirrorSavedImage).then(async (result) => {
+      if (active) setCapturedPreview(result);
+    }).catch(() => { if (active) setCapturedPreview(captured); });
+    return () => { active = false; };
+  }, [captured, filter, intensity]);
+
+  useEffect(() => {
+    if (!isOpen) return undefined;
+    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [isOpen, onClose]);
+
+  useEffect(() => () => { if (timerRef.current) window.clearTimeout(timerRef.current); stopStream(); }, []);
+
+  const applyTrackConstraints = async (constraints: MediaTrackConstraintSet) => {
+    const track = streamRef.current?.getVideoTracks()[0];
+    if (!track?.applyConstraints) return;
+    try { await track.applyConstraints(constraints); } catch { /* unsupported controls are deliberately ignored */ }
+  };
+
+  const changeTorch = async () => {
+    const next = !torch;
+    await applyTrackConstraints({ advanced: [{ torch: next } as MediaTrackConstraintSet] } as MediaTrackConstraintSet);
+    setTorch(next);
+  };
+
+  const changeZoom = async (value: number) => { const bounded = Math.min(4, Math.max(1, value)); setZoom(bounded); await applyTrackConstraints({ advanced: [{ zoom: bounded } as MediaTrackConstraintSet] } as MediaTrackConstraintSet); };
+
+  const drawCapture = () => {
+    const video = videoRef.current;
+    if (!video || !video.videoWidth || !video.videoHeight) { setCameraMessage("Your camera is still starting. Please try again in a moment."); return; }
+    const canvas = document.createElement("canvas");
+    const stage = video.parentElement;
+    const targetRatio = stage && stage.clientWidth > 0 && stage.clientHeight > 0 ? stage.clientWidth / stage.clientHeight : video.videoWidth / video.videoHeight;
+    const sourceRatio = video.videoWidth / video.videoHeight;
+    let sx = 0; let sy = 0; let sw = video.videoWidth; let sh = video.videoHeight;
+    if (sourceRatio > targetRatio) { sw = Math.round(video.videoHeight * targetRatio); sx = Math.round((video.videoWidth - sw) / 2); }
+    else if (sourceRatio < targetRatio) { sh = Math.round(video.videoWidth / targetRatio); sy = Math.round((video.videoHeight - sh) / 2); }
+    canvas.width = sw;
+    canvas.height = sh;
+    const context = canvas.getContext("2d");
+    if (!context) { setCameraMessage("Could not capture this photo."); return; }
+    context.save();
+    context.drawImage(video, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
+    const faceBox = faceRef.current;
+    const drawText = (text: string, x: number, y: number, size: number, color: string) => { context.font = `${size}px system-ui, sans-serif`; context.textAlign = "center"; context.textBaseline = "middle"; context.fillStyle = color; context.shadowColor = "rgba(0,0,0,.55)"; context.shadowBlur = Math.max(2, size * .12); context.fillText(text, x, y); context.shadowBlur = 0; };
+    if (faceBox && (lens === "puppy" || lens === "cat")) { drawText(lens === "puppy" ? "🐶" : "🐱", faceBox.x + faceBox.width * .15, faceBox.y - faceBox.height * .2, Math.max(28, faceBox.width * .28), "#fff"); drawText(lens === "puppy" ? "🐶" : "🐱", faceBox.x + faceBox.width * .85, faceBox.y - faceBox.height * .2, Math.max(28, faceBox.width * .28), "#fff"); drawText(lens === "puppy" ? "●" : "♡", faceBox.x + faceBox.width * .5, faceBox.y + faceBox.height * .58, Math.max(18, faceBox.width * .13), "#ff91ae"); }
+    if (faceBox && lens === "eyes") { context.fillStyle = "rgba(121,217,255,.82)"; context.strokeStyle = "#fff"; context.lineWidth = Math.max(3, faceBox.width * .025); for (const x of [faceBox.x + faceBox.width * .3, faceBox.x + faceBox.width * .7]) { context.beginPath(); context.arc(x, faceBox.y + faceBox.height * .38, faceBox.width * .1, 0, Math.PI * 2); context.fill(); context.stroke(); } }
+    if (faceBox && lens === "sunglasses") { context.fillStyle = "rgba(7,8,16,.88)"; context.strokeStyle = "#fff"; context.lineWidth = Math.max(2, faceBox.width * .015); context.fillRect(faceBox.x + faceBox.width * .1, faceBox.y + faceBox.height * .3, faceBox.width * .8, faceBox.height * .18); context.strokeRect(faceBox.x + faceBox.width * .1, faceBox.y + faceBox.height * .3, faceBox.width * .8, faceBox.height * .18); }
+    if (faceBox && lens === "crown") drawText("✦ ✦ ✦", faceBox.x + faceBox.width * .5, faceBox.y - faceBox.height * .2, Math.max(26, faceBox.width * .18), "#ffd76f");
+    if (faceBox && lens === "hearts") { drawText("♥", faceBox.x - faceBox.width * .08, faceBox.y + faceBox.height * .15, Math.max(22, faceBox.width * .16), "#ff78ac"); drawText("♥", faceBox.x + faceBox.width * 1.08, faceBox.y + faceBox.height * .42, Math.max(22, faceBox.width * .16), "#ff78ac"); }
+    if (lens === "particles" || lens === "confetti") { const particles = [[.15, .22], [.78, .27], [.24, .72], [.84, .76], [.52, .12], [.53, .86]]; particles.forEach(([x, y], index) => { context.fillStyle = index % 2 ? "#ff9fca" : "#b69cff"; context.beginPath(); context.arc(canvas.width * x, canvas.height * y, Math.max(4, canvas.width * .008), 0, Math.PI * 2); context.fill(); }); }
+    context.restore();
+    setCaptured(canvas.toDataURL("image/jpeg", .98));
+    setFlash(true);
+    window.setTimeout(() => setFlash(false), 140);
+  };
+
+  const capture = () => {
+    if (countdown !== null || cameraLoading) return;
+    if (timer === 0) { drawCapture(); return; }
+    setCountdown(timer);
+    let remaining = timer;
+    const tick = () => { remaining -= 1; if (remaining <= 0) { setCountdown(null); drawCapture(); } else { setCountdown(remaining); timerRef.current = window.setTimeout(tick, 1000); } };
+    timerRef.current = window.setTimeout(tick, 1000);
+  };
+
+  const flip = async () => {
+    const devices = await navigator.mediaDevices?.enumerateDevices?.().catch(() => [] as MediaDeviceInfo[]);
+    const cameras = (devices || []).filter((device) => device.kind === "videoinput");
+    if (cameras.length < 2) { setCameraMessage("This device has one camera, so Flip is unavailable."); return; }
+    stopStream();
+    setFacing((value) => value === "environment" ? "user" : "environment");
+  };
+  const retake = () => { setCapturedPreview(null); setCaptured(null); };
+  const focusCameraOption = (event: MouseEvent<HTMLButtonElement>) => {
+    event.currentTarget.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "center" });
+  };
+  useEffect(() => {
+    if (!isOpen) return;
+    const onCarouselClick = (event: Event) => {
+      const target = event.target as HTMLElement;
+      const button = target.closest<HTMLButtonElement>(".camera-snap-carousel button");
+      if (button) focusCameraOption({ currentTarget: button } as MouseEvent<HTMLButtonElement>);
+    };
+    document.addEventListener("click", onCarouselClick);
+    return () => document.removeEventListener("click", onCarouselClick);
+  }, [isOpen]);
+
+  if (!isOpen) return null;
+  const { mirrorPreview } = cameraMirroringPolicy(activeFacing, mirrorFrontPreview);
+  const finalCapture = capturedPreview || captured;
+  const boxStyle = face && videoRef.current?.videoWidth ? { left: `${(face.x / videoRef.current.videoWidth) * 100}%`, top: `${(face.y / videoRef.current.videoHeight) * 100}%`, width: `${(face.width / videoRef.current.videoWidth) * 100}%`, height: `${(face.height / videoRef.current.videoHeight) * 100}%` } : undefined;
+  return createPortal(<div className="camera-studio-shell" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+    <section className="camera-studio-full" role="dialog" aria-modal="true" aria-label="Camera studio">
+      <header className="camera-studio-topbar"><button className="camera-studio-icon" type="button" aria-label="Close camera" onClick={onClose}>×</button><div><strong>Camera studio</strong><small>{captured ? "Review your capture" : "Create a moment"}</small></div></header>
+      <div className={`camera-stage ${grid ? "with-grid" : ""} ${captured ? "is-captured" : ""}`}>
+        {captured ? <img className="camera-captured-image" src={finalCapture || undefined} alt="Captured preview" /> : <video ref={videoRef} className="camera-live-video" muted playsInline style={{ filter: cameraFilterStyle(filter, intensity), transform: mirrorPreview ? "scaleX(-1)" : "none" }} />}
+        {!captured && lens !== "natural" && <div className={`camera-lens-layer lens-${lens}`} style={{ transform: mirrorPreview ? "scaleX(-1)" : "none" }} aria-hidden="true">{face && boxStyle && (lens === "puppy" || lens === "cat") && <div className="face-lens-anchor" style={boxStyle}><span className="lens-ear left">{lens === "puppy" ? "🐶" : "🐱"}</span><span className="lens-ear right">{lens === "puppy" ? "🐶" : "🐱"}</span><span className="lens-nose">{lens === "puppy" ? "●" : "♡"}</span></div>}{face && boxStyle && lens === "eyes" && <div className="face-lens-anchor" style={boxStyle}><span className="lens-eye left" /><span className="lens-eye right" /></div>}{face && boxStyle && lens === "sunglasses" && <div className="face-lens-layer" style={boxStyle}><span className="lens-sunglasses">▰</span></div>}{face && boxStyle && lens === "crown" && <div className="face-lens-anchor" style={boxStyle}><span className="lens-crown">✦ ✦ ✦</span></div>}{face && boxStyle && lens === "hearts" && <div className="face-lens-anchor" style={boxStyle}><span className="lens-heart one">♥</span><span className="lens-heart two">♥</span><span className="lens-heart three">♥</span></div>}{(lens === "particles" || lens === "confetti") && <div className="ambient-particles"><i /><i /><i /><i /><i /><i /></div>}</div>}
+        {grid && <div className="camera-grid-lines" aria-hidden="true"><i /><i /><i /><i /></div>}
+        {cameraLoading && <div className="camera-status"><span className="loading-spinner" /> Starting camera…</div>}
+        {cameraMessage && <div className="camera-status camera-status-error"><strong>{cameraMessage}</strong><button type="button" className="camera-studio-secondary" onClick={() => { setCameraMessage(""); setCameraLoading(true); setRetryToken((value) => value + 1); }}>Try again</button></div>}
+        {countdown !== null && <div className="camera-countdown" aria-live="polite">{countdown}</div>}
+        {flash && <div className="camera-capture-flash" aria-hidden="true" />}
+        {selectedLens.ar && !trackingAvailable && !cameraLoading && <div className="camera-tracking-note">Face tracking is unavailable here; choose a conventional lens or move to a supported browser.</div>}
+      </div>
+      {captured ? <div className="camera-review-actions"><button className="camera-studio-secondary" type="button" onClick={retake}>Retake</button><button className="camera-studio-secondary" type="button" onClick={() => onSave?.({ dataUrl: finalCapture || captured, filter: "none", intensity: 1 })}>Save</button><button className="camera-studio-secondary camera-sneak-action" type="button" onClick={() => onSneak ? onSneak({ dataUrl: finalCapture || captured, filter: "none", intensity: 1 }) : onError?.("Open the camera from a one-to-one chat to send a Sneak.")}>Send Sneak</button><button className="camera-studio-primary" type="button" onClick={() => { onCapture({ dataUrl: finalCapture || captured, filter: "none", intensity: 1 }); onClose(); }}>Post</button></div> : <>
+        <div className="camera-control-row" aria-label="Camera controls"><button className="camera-control" type="button" onClick={flip} aria-label="Switch front and rear camera">↺<small>Flip</small></button>{zoomRange.max > zoomRange.min && <label className="camera-zoom-control"><span>Zoom {zoom.toFixed(1)}×</span><input aria-label="Camera zoom" type="range" min={zoomRange.min} max={zoomRange.max} step={zoomRange.step} value={zoom} onChange={(event) => void changeZoom(Number(event.target.value))} /></label>}<button className={`camera-control ${grid ? "active" : ""}`} type="button" aria-label="Toggle grid" onClick={() => setGrid((value) => !value)}>▦<small>Grid</small></button></div>
+        <div className="camera-bottom-dock"><nav className="camera-dock-tabs" aria-label="Camera categories">{([["popular", "Popular", "✦"], ["lenses", "AR Lenses", "◉"], ["looks", "Color", "◌"]] as const).map(([id, label, icon]) => <button key={id} type="button" className={dockCategory === id ? "active" : ""} onClick={() => setDockCategory(id)}><span>{icon}</span>{label}</button>)}</nav><div className="camera-snap-carousel" aria-label={`${dockCategory} camera effects`}>{dockCategory === "popular" && <>{popularLooks.map((option) => <button key={`look-${option.id}`} className={filter === option.id ? "active" : ""} type="button" onClick={() => setFilter(option.id)}><span>{option.icon}</span><small>{option.label}</small></button>)}{popularLenses.map((option) => <button key={`lens-${option.id}`} className={lens === option.id ? "active" : ""} type="button" onClick={() => setLens(option.id)}><span>{option.icon}</span><small>{option.label}</small></button>)}</>}{dockCategory === "looks" && cameraFilterOptions.map((option) => <button key={option.id} className={filter === option.id ? "active" : ""} type="button" onClick={() => setFilter(option.id)}><span>{option.icon}</span><small>{option.label}</small></button>)}{dockCategory === "lenses" && cameraLensOptions.map((option) => <button key={option.id} className={lens === option.id ? "active" : ""} type="button" onClick={() => setLens(option.id)}><span>{option.icon}</span><small>{option.label}</small></button>)}</div><div className="camera-dock-capture"><span className="camera-cochat-mark">C</span><button className={`camera-shutter-dock ${countdown !== null ? "is-counting" : ""}`} type="button" aria-label="Capture photo" onClick={capture}><i /></button></div></div>
+      </>}
+    </section>
+  </div>, document.body);
+}
