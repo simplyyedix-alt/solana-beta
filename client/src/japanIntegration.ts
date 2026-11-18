@@ -9,6 +9,9 @@ export const RoadSegment = {
   modelUrl: '/assets/models/japan/road-segment.glb'
 };
 
+let mixer: any = null;
+let animClock: any = null;
+
 export function applyJapanIntegration(scene: any) {
   if (!scene) return;
 
@@ -20,9 +23,39 @@ export function applyJapanIntegration(scene: any) {
     (gltf: any) => {
       const model = gltf.scene;
       model.name = 'JapanTokyoModel';
+      // Scale Tokyo model for scene scale
+      model.scale.set(0.02, 0.02, 0.02);
+      // Position model near the player starting area
       model.position.set(0, 0, 0);
+
+      model.traverse((child: any) => {
+        if (child.isMesh) {
+          child.castShadow = true;
+          child.receiveShadow = true;
+        }
+      });
+
       scene.add(model);
-      console.log('Tokyo model loaded and added to scene');
+      console.log('Japan Tokyo model loaded and added to scene');
+
+      // Play model animations (train, lights, etc.)
+      if (gltf.animations && gltf.animations.length > 0) {
+        mixer = new THREE.AnimationMixer(model);
+        gltf.animations.forEach((clip: any) => {
+          mixer.clipAction(clip).play();
+        });
+        if (!animClock) {
+          animClock = new THREE.Clock();
+          const loop = () => {
+            requestAnimationFrame(loop);
+            if (mixer && animClock) {
+              const delta = animClock.getDelta();
+              mixer.update(delta);
+            }
+          };
+          loop();
+        }
+      }
     },
     undefined,
     (err: any) => {
@@ -36,9 +69,14 @@ export function applyJapanIntegration(scene: any) {
     (gltf: any) => {
       const model = gltf.scene;
       model.name = 'JapanRoadSegment';
-      model.position.set(0, 0.05, 0);
+      model.position.set(0, 0.02, 0);
+      model.traverse((child: any) => {
+        if (child.isMesh) {
+          child.receiveShadow = true;
+        }
+      });
       scene.add(model);
-      console.log('Road segment model loaded and added to scene');
+      console.log('Japan road segment loaded and added to scene');
     },
     undefined,
     (err: any) => {
