@@ -22,15 +22,26 @@ export const applyJapanIntegration = (scene: any) => {
       if (scene.addBuilding) {
         scene.addBuilding(JapanBuilding);
       } else if (scene.add) {
-        // Dynamically import GLTFLoader only when we need it
-        import("three/examples/jsm/loaders/GLTFLoader")
-          .then(({ GLTFLoader }) => {
-            const loader = new GLTFLoader();
-            loader.load(JapanBuilding.modelUrl, gltf => {
-              scene.add(gltf.scene);
-            });
-          })
-          .catch(err => console.error("Failed to load GLTFLoader:", err));
+        const isGlb = JapanBuilding.modelUrl && JapanBuilding.modelUrl.toLowerCase().endsWith('.glb');
+        if (isGlb) {
+          // Dynamically import GLTFLoader only when we need it
+          import("three/examples/jsm/loaders/GLTFLoader")
+            .then(({ GLTFLoader }) => {
+              const loader = new GLTFLoader();
+              loader.load(JapanBuilding.modelUrl, gltf => {
+                scene.add(gltf.scene);
+              });
+            })
+            .catch(err => console.error("Failed to load GLTFLoader:", err));
+        } else {
+          // Simple box placeholder for the building
+          const box = new THREE.Mesh(
+            new THREE.BoxGeometry(5, 20, 5),
+            new THREE.MeshStandardMaterial({ color: 0xaaaaaa })
+          );
+          box.position.set(0, 10, 0);
+          scene.add(box);
+        }
       }
     })
     .catch(err => console.error("Failed to load Japan map:", err));
