@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react'
+import { useJapanIntegration } from "./japanIntegration";
 import * as THREE from 'three'
 import { RGBELoader } from 'three/addons/loaders/RGBELoader.js'
 
@@ -787,7 +788,8 @@ function districtAt(x: number, z: number) {
 }
 
 export default function CityScene({ active, paused, objectives, onMission, onHud, onError, onReady }: CitySceneProps) {
-  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const sceneRef = useRef<any>(null);
   const missionCallback = useRef(onMission)
   const hudCallback = useRef(onHud)
   const errorCallback = useRef(onError)
@@ -827,7 +829,10 @@ export default function CityScene({ active, paused, objectives, onMission, onHud
     renderer.toneMapping = THREE.ACESFilmicToneMapping
     renderer.toneMappingExposure = 1.08
 
-    const scene = new THREE.Scene()
+    const scene = new THREE.Scene();
+    // Store scene in ref for integration
+    sceneRef.current = scene;
+    useJapanIntegration(sceneRef.current);
     scene.background = new THREE.Color('#9db7b7')
     scene.fog = new THREE.FogExp2('#91aaa5', .00046)
     const camera = new THREE.PerspectiveCamera(62, 16 / 9, .1, 1000)
