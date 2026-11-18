@@ -12,7 +12,7 @@ export const RoadSegment = {
 let mixer: any = null;
 let animClock: any = null;
 
-export function applyJapanIntegration(scene: any) {
+export function applyJapanIntegration(scene: any, onStatus?: (status: string) => void) {
   if (!scene) return;
 
   const loader = new GLTFLoader();
@@ -21,45 +21,56 @@ export function applyJapanIntegration(scene: any) {
   loader.load(
     JapanCity.modelUrl,
     (gltf: any) => {
-      const model = gltf.scene;
-      model.name = 'JapanTokyoModel';
-      // Scale Tokyo model for scene scale
-      model.scale.set(0.02, 0.02, 0.02);
-      // Position model near the player starting area
-      model.position.set(0, 0, 0);
+      try {
+        const model = gltf.scene;
+        model.name = 'JapanTokyoModel';
+        // Scale Tokyo model for scene scale
+        model.scale.set(0.02, 0.02, 0.02);
+        // Position model near the player starting area
+        model.position.set(0, 0, 0);
 
-      model.traverse((child: any) => {
-        if (child.isMesh) {
-          child.castShadow = true;
-          child.receiveShadow = true;
-        }
-      });
-
-      scene.add(model);
-      console.log('Japan Tokyo model loaded and added to scene');
-
-      // Play model animations (train, lights, etc.)
-      if (gltf.animations && gltf.animations.length > 0) {
-        mixer = new THREE.AnimationMixer(model);
-        gltf.animations.forEach((clip: any) => {
-          mixer.clipAction(clip).play();
+        model.traverse((child: any) => {
+          if (child.isMesh) {
+            child.castShadow = true;
+            child.receiveShadow = true;
+          }
         });
-        if (!animClock) {
-          animClock = new THREE.Clock();
-          const loop = () => {
-            requestAnimationFrame(loop);
-            if (mixer && animClock) {
-              const delta = animClock.getDelta();
-              mixer.update(delta);
-            }
-          };
-          loop();
+
+        scene.add(model);
+        console.log('Japan Tokyo model loaded and added to scene');
+        onStatus?.('Tokyo model loaded');
+
+        // Play model animations (train, lights, etc.)
+        if (gltf.animations && gltf.animations.length > 0) {
+          mixer = new THREE.AnimationMixer(model);
+          gltf.animations.forEach((clip: any) => {
+            mixer.clipAction(clip).play();
+          });
+          if (!animClock) {
+            animClock = new THREE.Clock();
+            const loop = () => {
+              requestAnimationFrame(loop);
+              if (mixer && animClock) {
+                const delta = animClock.getDelta();
+                mixer.update(delta);
+              }
+            };
+            loop();
+          }
         }
+      } catch (err) {
+        console.error('Error attaching Tokyo model to scene:', err);
       }
     },
-    undefined,
+    (xhr: any) => {
+      if (xhr.lengthComputable && xhr.total > 0) {
+        const percent = Math.round((xhr.loaded / xhr.total) * 100);
+        onStatus?.(`Loading Tokyo model: ${percent}%`);
+      }
+    },
     (err: any) => {
       console.warn('Note: Tokyo model load deferred or failed:', err);
+      onStatus?.('Tokyo model load deferred');
     }
   );
 
@@ -67,16 +78,20 @@ export function applyJapanIntegration(scene: any) {
   loader.load(
     RoadSegment.modelUrl,
     (gltf: any) => {
-      const model = gltf.scene;
-      model.name = 'JapanRoadSegment';
-      model.position.set(0, 0.02, 0);
-      model.traverse((child: any) => {
-        if (child.isMesh) {
-          child.receiveShadow = true;
-        }
-      });
-      scene.add(model);
-      console.log('Japan road segment loaded and added to scene');
+      try {
+        const model = gltf.scene;
+        model.name = 'JapanRoadSegment';
+        model.position.set(0, 0.02, 0);
+        model.traverse((child: any) => {
+          if (child.isMesh) {
+            child.receiveShadow = true;
+          }
+        });
+        scene.add(model);
+        console.log('Japan road segment loaded and added to scene');
+      } catch (err) {
+        console.error('Error attaching road segment to scene:', err);
+      }
     },
     undefined,
     (err: any) => {
