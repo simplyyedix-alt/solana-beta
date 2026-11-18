@@ -571,7 +571,294 @@ function makePerson(variant = 0, player = false) {
   return root
 }
 
+function makeVagnerHypercar(color: string) {
+  const group = new THREE.Group()
+
+  // High-end automotive metallic clearcoat paint
+  const paint = new THREE.MeshPhysicalMaterial({
+    color,
+    metalness: .90,
+    roughness: .12,
+    clearcoat: 1.0,
+    clearcoatRoughness: .04,
+    reflectivity: .96,
+  })
+
+  // Twill carbon-fiber composite
+  const carbon = new THREE.MeshPhysicalMaterial({
+    color: '#131417',
+    metalness: .42,
+    roughness: .32,
+    clearcoat: .8,
+    clearcoatRoughness: .12,
+  })
+
+  // Dark stealth canopy glass
+  const glass = new THREE.MeshPhysicalMaterial({
+    color: '#060a0f',
+    metalness: .2,
+    roughness: .04,
+    clearcoat: 1.0,
+    clearcoatRoughness: .03,
+    transparent: true,
+    opacity: .85,
+  })
+
+  const titanium = new THREE.MeshStandardMaterial({
+    color: '#555f68',
+    metalness: .96,
+    roughness: .2,
+  })
+
+  const ledHeadlight = new THREE.MeshBasicMaterial({ color: '#f0f9ff', toneMapped: false })
+  const ledTaillight = new THREE.MeshBasicMaterial({ color: '#ff1414', toneMapped: false })
+  const brakeDiscMat = new THREE.MeshStandardMaterial({ color: '#7a8288', metalness: .92, roughness: .28 })
+  const caliperMat = new THREE.MeshStandardMaterial({ color: '#ffcc00', roughness: .3, metalness: .4 })
+  const tireMat = new THREE.MeshStandardMaterial({ color: '#111315', roughness: .86 })
+  const rimMat = new THREE.MeshStandardMaterial({ color: '#25292e', metalness: .94, roughness: .16 })
+
+  // 1. Central aerodynamic monocoque tub and belly pan
+  const bellyGeom = new THREE.BoxGeometry(4.3, .08, 1.82)
+  const belly = new THREE.Mesh(bellyGeom, carbon)
+  belly.position.set(0, .14, 0)
+  belly.castShadow = true
+  group.add(belly)
+
+  // 2. Teardrop cockpit canopy (Aston Martin Valkyrie / Vagner signature)
+  const canopyShape = new THREE.Shape()
+  canopyShape.moveTo(-.85, .52)
+  canopyShape.lineTo(-.42, .98)
+  canopyShape.lineTo(.28, .98)
+  canopyShape.lineTo(.92, .54)
+  canopyShape.lineTo(.65, .44)
+  canopyShape.lineTo(-.78, .44)
+  canopyShape.closePath()
+  const canopyGeom = new THREE.ExtrudeGeometry(canopyShape, {
+    depth: 1.28,
+    bevelEnabled: true,
+    bevelSegments: 4,
+    steps: 1,
+    bevelSize: .08,
+    bevelThickness: .08,
+  })
+  canopyGeom.translate(0, 0, -1.28 / 2)
+  const canopy = new THREE.Mesh(canopyGeom, glass)
+  canopy.castShadow = true
+  group.add(canopy)
+
+  // 3. Central roof intake snorkel & aerodynamic dorsal shark fin
+  const snorkelGeom = new THREE.BoxGeometry(.85, .12, .28)
+  const snorkel = new THREE.Mesh(snorkelGeom, carbon)
+  snorkel.position.set(.05, 1.05, 0)
+  snorkel.castShadow = true
+  group.add(snorkel)
+
+  const sharkFinGeom = new THREE.BoxGeometry(1.2, .24, .035)
+  const sharkFin = new THREE.Mesh(sharkFinGeom, carbon)
+  sharkFin.position.set(-.82, .92, 0)
+  sharkFin.castShadow = true
+  group.add(sharkFin)
+
+  // 4. Low dropped front nose & aerodynamic vented bonnet (hood)
+  const noseShape = new THREE.Shape()
+  noseShape.moveTo(.6, .45)
+  noseShape.lineTo(1.85, .48)
+  noseShape.lineTo(2.26, .32)
+  noseShape.lineTo(2.28, .18)
+  noseShape.lineTo(.6, .18)
+  noseShape.closePath()
+  const noseGeom = new THREE.ExtrudeGeometry(noseShape, {
+    depth: 1.96,
+    bevelEnabled: true,
+    bevelSegments: 4,
+    steps: 1,
+    bevelSize: .06,
+    bevelThickness: .06,
+  })
+  noseGeom.translate(0, 0, -1.96 / 2)
+  const nose = new THREE.Mesh(noseGeom, paint)
+  nose.castShadow = true
+  group.add(nose)
+
+  // Hood central air extraction vents (dual black recessed flow channels)
+  for (const side of [-1, 1]) {
+    const ventGeom = new THREE.BoxGeometry(.72, .04, .28)
+    const vent = new THREE.Mesh(ventGeom, carbon)
+    vent.position.set(1.42, .46, side * .38)
+    group.add(vent)
+  }
+
+  // Dual-tier carbon front splitter with lateral winglets
+  const splitterGeom = new THREE.BoxGeometry(.65, .04, 2.18)
+  const splitter = new THREE.Mesh(splitterGeom, carbon)
+  splitter.position.set(2.05, .11, 0)
+  splitter.castShadow = true
+  group.add(splitter)
+
+  for (const side of [-1, 1]) {
+    const wingletGeom = new THREE.BoxGeometry(.32, .18, .04)
+    const winglet = new THREE.Mesh(wingletGeom, carbon)
+    winglet.position.set(2.18, .18, side * 1.08)
+    group.add(winglet)
+  }
+
+  // Thin aggressive LED headlights
+  for (const side of [-1, 1]) {
+    const headlightGeom = new THREE.BoxGeometry(.28, .05, .32)
+    const headlight = new THREE.Mesh(headlightGeom, ledHeadlight)
+    headlight.position.set(2.16, .44, side * .78)
+    headlight.rotation.y = side * .22
+    group.add(headlight)
+  }
+
+  // 5. Rear muscular engine deck & quarter panels
+  const rearShape = new THREE.Shape()
+  rearShape.moveTo(-.65, .45)
+  rearShape.lineTo(-1.8, .74)
+  rearShape.lineTo(-2.28, .56)
+  rearShape.lineTo(-2.28, .18)
+  rearShape.lineTo(-.65, .18)
+  rearShape.closePath()
+  const rearGeom = new THREE.ExtrudeGeometry(rearShape, {
+    depth: 2.06,
+    bevelEnabled: true,
+    bevelSegments: 4,
+    steps: 1,
+    bevelSize: .07,
+    bevelThickness: .07,
+  })
+  rearGeom.translate(0, 0, -2.06 / 2)
+  const rearDeck = new THREE.Mesh(rearGeom, paint)
+  rearDeck.castShadow = true
+  group.add(rearDeck)
+
+  // 6. Side aerodynamic flow-through tunnels & carbon side skirts
+  for (const side of [-1, 1]) {
+    const skirtGeom = new THREE.BoxGeometry(2.3, .04, .22)
+    const skirt = new THREE.Mesh(skirtGeom, carbon)
+    skirt.position.set(0, .11, side * 1.05)
+    group.add(skirt)
+
+    const ductGeom = new THREE.BoxGeometry(1.4, .26, .12)
+    const duct = new THREE.Mesh(ductGeom, carbon)
+    duct.position.set(.1, .32, side * .72)
+    group.add(duct)
+
+    const mirrorStem = new THREE.Mesh(new THREE.CylinderGeometry(.015, .015, .18), carbon)
+    mirrorStem.position.set(.35, .68, side * .74)
+    mirrorStem.rotation.z = side * .35
+    group.add(mirrorStem)
+
+    const mirrorHead = new THREE.Mesh(new THREE.BoxGeometry(.24, .08, .1), carbon)
+    mirrorHead.position.set(.35, .76, side * .84)
+    group.add(mirrorHead)
+  }
+
+  // 7. Rear carbon-fiber aero diffuser with 4 vertical strakes
+  const diffuserGeom = new THREE.BoxGeometry(.85, .12, 1.84)
+  const diffuser = new THREE.Mesh(diffuserGeom, carbon)
+  diffuser.position.set(-2.0, .15, 0)
+  diffuser.rotation.z = -.18
+  diffuser.castShadow = true
+  group.add(diffuser)
+
+  for (let s = -2; s <= 2; s++) {
+    if (s === 0) continue
+    const strakeGeom = new THREE.BoxGeometry(.74, .16, .03)
+    const strake = new THREE.Mesh(strakeGeom, carbon)
+    strake.position.set(-2.0, .18, s * .38)
+    strake.rotation.z = -.18
+    group.add(strake)
+  }
+
+  // Dual high-mounted titanium exhaust tips
+  for (const side of [-1, 1]) {
+    const exhaust = new THREE.Mesh(new THREE.CylinderGeometry(.06, .06, .22, 16), titanium)
+    exhaust.rotation.z = Math.PI / 2
+    exhaust.position.set(-2.28, .54, side * .14)
+    group.add(exhaust)
+  }
+
+  // Full-width continuous curved LED taillight blade
+  const taillightGeom = new THREE.BoxGeometry(.06, .04, 1.88)
+  const taillight = new THREE.Mesh(taillightGeom, ledTaillight)
+  taillight.position.set(-2.3, .63, 0)
+  group.add(taillight)
+
+  // 8. Swan-neck rear GT Wing
+  for (const side of [-1, 1]) {
+    const pylonGeom = new THREE.BoxGeometry(.28, .36, .035)
+    const pylon = new THREE.Mesh(pylonGeom, carbon)
+    pylon.position.set(-1.86, .86, side * .44)
+    pylon.rotation.z = .32
+    group.add(pylon)
+  }
+  const wingAirfoilGeom = new THREE.BoxGeometry(.38, .04, 2.05)
+  const wingAirfoil = new THREE.Mesh(wingAirfoilGeom, carbon)
+  wingAirfoil.position.set(-1.95, 1.05, 0)
+  wingAirfoil.rotation.z = -.08
+  wingAirfoil.castShadow = true
+  group.add(wingAirfoil)
+
+  for (const side of [-1, 1]) {
+    const endplateGeom = new THREE.BoxGeometry(.44, .24, .03)
+    const endplate = new THREE.Mesh(endplateGeom, carbon)
+    endplate.position.set(-1.95, 1.05, side * 1.03)
+    group.add(endplate)
+  }
+
+  // 9. High-performance racing wheels with Brembo brake calipers & rotors
+  const wheels: any[] = []
+  const wheelRadius = .38
+  const frontX = 1.48
+  const rearX = -1.48
+  const trackWidthFront = 2.1
+  const trackWidthRear = 2.18
+
+  const wheelPositions = [
+    { x: frontX, z: -trackWidthFront / 2, width: .26 },
+    { x: frontX, z: trackWidthFront / 2, width: .26 },
+    { x: rearX, z: -trackWidthRear / 2, width: .32 },
+    { x: rearX, z: trackWidthRear / 2, width: .32 },
+  ]
+
+  wheelPositions.forEach(pos => {
+    // Tire
+    const tire = new THREE.Mesh(new THREE.CylinderGeometry(wheelRadius, wheelRadius, pos.width, 24), tireMat)
+    tire.rotation.x = Math.PI / 2
+    tire.position.set(pos.x, wheelRadius + .02, pos.z)
+    tire.castShadow = true
+    group.add(tire)
+
+    // Forged alloy rim
+    const rim = new THREE.Mesh(new THREE.CylinderGeometry(wheelRadius * .68, wheelRadius * .68, pos.width + .01, 20), rimMat)
+    rim.rotation.x = Math.PI / 2
+    rim.position.set(pos.x, wheelRadius + .02, pos.z)
+    group.add(rim)
+
+    // Carbon-ceramic brake rotor
+    const rotor = new THREE.Mesh(new THREE.CylinderGeometry(wheelRadius * .52, wheelRadius * .52, .04, 16), brakeDiscMat)
+    rotor.rotation.x = Math.PI / 2
+    rotor.position.set(pos.x, wheelRadius + .02, pos.z)
+    group.add(rotor)
+
+    // Yellow Brembo brake caliper (fixed, mounted at top of disc)
+    const caliper = new THREE.Mesh(new THREE.BoxGeometry(.14, .08, .07), caliperMat)
+    caliper.position.set(pos.x, wheelRadius + .14, pos.z)
+    group.add(caliper)
+
+    wheels.push(tire, rim)
+  })
+
+  group.userData.modelName = 'DEWBAUCHEE VAGNER'
+  group.userData.wheels = wheels
+  return group
+}
+
 function makeTrafficCar(color: string, variant = 0) {
+  if (variant % 4 === 3) {
+    return makeVagnerHypercar(color)
+  }
   const group = new THREE.Group()
   // AAA Automotive paint with deep metallic clearcoat & environmental reflections
   const paint = new THREE.MeshPhysicalMaterial({
@@ -1278,23 +1565,23 @@ export default function CityScene({ active, paused, objectives, onMission, onHud
     for (let i = 0; i < 12; i++) {
       const axis = i % 2 ? 'x' : 'z'
       const fixed = (Math.floor(i / 2) - 3) * 100 + (i % 3 ? 3.4 : -3.4)
-      const car = makeTrafficCar(['#ba6659', '#487982', '#c4b58e', '#584e66'][i % 4], i % 3)
+      const car = makeTrafficCar(['#59a034', '#34445c', '#ba6659', '#00b4d8'][i % 4], i % 4)
       scene.add(car)
       traffic.push({ object: car, axis, fixed, progress: -420 + i * 73, speed: 6 + (i % 4) * 1.7, limit: 440 })
     }
 
     const parkedSpots = [
-      { x: 6.5, z: -3.5, yaw: Math.PI / 2 },
-      { x: -7, z: -96, yaw: Math.PI / 2 },
-      { x: 107, z: 96, yaw: Math.PI / 2 },
-      { x: 193, z: -104, yaw: Math.PI / 2 },
-      { x: -193, z: 204, yaw: Math.PI / 2 },
-      { x: 307, z: -196, yaw: Math.PI / 2 },
-      { x: -307, z: 296, yaw: Math.PI / 2 },
-      { x: 407, z: 104, yaw: Math.PI / 2 },
+      { x: 6.5, z: -3.5, yaw: Math.PI / 2, variant: 3, color: '#44d62c' }, // Player spawn hypercar: Dewbauchee Vagner in Pearlescent Racing Lime!
+      { x: -7, z: -96, yaw: Math.PI / 2, variant: 0, color: '#246a73' },
+      { x: 107, z: 96, yaw: Math.PI / 2, variant: 3, color: '#e63946' }, // Vagner in Metallic Crimson
+      { x: 193, z: -104, yaw: Math.PI / 2, variant: 1, color: '#34445c' },
+      { x: -193, z: 204, yaw: Math.PI / 2, variant: 2, color: '#e7e1d4' },
+      { x: 307, z: -196, yaw: Math.PI / 2, variant: 3, color: '#00b4d8' }, // Vagner in Electric Cyan
+      { x: -307, z: 296, yaw: Math.PI / 2, variant: 0, color: '#465e4d' },
+      { x: 407, z: 104, yaw: Math.PI / 2, variant: 3, color: '#f77f00' }, // Vagner in Papaya Orange
     ]
-    parkedSpots.forEach((spot, index) => {
-      const car = makeTrafficCar(['#bd4237', '#246a73', '#e3c17a', '#34445c', '#e7e1d4', '#71514d', '#465e4d', '#aa653c'][index], index % 3)
+    parkedSpots.forEach((spot) => {
+      const car = makeTrafficCar(spot.color, spot.variant)
       car.position.set(spot.x, 0, spot.z)
       car.rotation.y = spot.yaw
       car.userData.driveable = true
