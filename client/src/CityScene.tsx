@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import { useJapanIntegration } from "./japanIntegration";
+import { applyJapanIntegration } from "./japanIntegration";
 import * as THREE from 'three'
 import { RGBELoader } from 'three/addons/loaders/RGBELoader.js'
 
