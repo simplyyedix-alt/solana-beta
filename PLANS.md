@@ -65,3 +65,5 @@ Transform the current block‑style prototype into a full‑blown AAA open‑wor
 
 **Repository Links**
 - [PLANS.md](file:///D:/github/Solara-Bay-Claude-Handoff/PLANS.md)
+
+- Added placeholder Tokyo Tower asset for Japan map (auto‑commit).
