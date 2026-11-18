@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { loadTokyoTiles } from "./tokyoIntegration";
+import { addExtraFeatures } from "./extraTokyoFeatures";
 import * as THREE from 'three'
 import { RGBELoader } from 'three/addons/loaders/RGBELoader.js'
 
