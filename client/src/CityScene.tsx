@@ -1102,62 +1102,70 @@ export default function CityScene({ active, paused, objectives, onMission, onHud
         entranceMarkerPositions.push(new THREE.Vector3(portal.x, .14, portal.z))
       }
     }
-    for (let gx = -5; gx < 5; gx++) for (let gz = -5; gz < 5; gz++) {
-      const centerX = gx * 100 + 50
-      const centerZ = gz * 100 + 50
-      const seed = seeded(gx, gz)
-      if (seed < .09) {
-        const park = new THREE.Mesh(new THREE.PlaneGeometry(68, 68), new THREE.MeshStandardMaterial({ color: '#2d5447', roughness: .96 }))
-        park.rotation.x = -Math.PI / 2
-        park.position.set(centerX, .12, centerZ)
-        park.receiveShadow = true
-        scene.add(park)
-        for (let t = 0; t < 7; t++) addTree(scene, centerX + (seeded(gx, gz, t) - .5) * 54, centerZ + (seeded(gx, gz, t + 19) - .5) * 54, .8 + seeded(gx, gz, t + 31) * .5)
-        continue
-      }
-      const width = 37 + Math.floor(seeded(gx, gz, 2) * 32)
-      const depth = 38 + Math.floor(seeded(gx, gz, 3) * 30)
-      const downtown = Math.max(Math.abs(gx), Math.abs(gz)) <= 2
-      const floors = downtown ? 7 + Math.floor(seeded(gx, gz, 4) * 12) : 3 + Math.floor(seeded(gx, gz, 4) * 6)
-      const label = labels[Math.floor(seeded(gx, gz, 5) * labels.length)]
-      const architecture = landmarkStyles[`${gx},${gz}`] ?? Math.floor(seed * 17)
-      const landmarkName = `${label} ${['TOWER', 'HOTEL', 'HOUSE', 'WORKS', 'ARCADE'][architecture % 5]}`
-      registerPortal(addBuilding(scene, blockers, sideDoorPoses, centerX + (seeded(gx, gz, 6) - .5) * 7, centerZ + (seeded(gx, gz, 7) - .5) * 7, width, depth, floors, architecture, landmarkName, buildingSurfaceMaps))
-      if (!downtown && seed > .64) {
-        const extraWidth = 18 + seeded(gx, gz, 9) * 13
-        const side = seeded(gx, gz, 10) > .5 ? 1 : -1
-        registerPortal(addBuilding(scene, blockers, sideDoorPoses, centerX + side * 25, centerZ + (seeded(gx, gz, 11) - .5) * 22, extraWidth, 22, 2 + Math.floor(seed * 4), Math.floor(seed * 23), labels[(Math.floor(seed * 7) + 3) % labels.length], buildingSurfaceMaps))
+    // Disable legacy procedural box buildings to make room for realistic Japan city models
+    const ENABLE_PROCEDURAL_BOX_BUILDINGS = false
+    if (ENABLE_PROCEDURAL_BOX_BUILDINGS) {
+      for (let gx = -5; gx < 5; gx++) for (let gz = -5; gz < 5; gz++) {
+        const centerX = gx * 100 + 50
+        const centerZ = gz * 100 + 50
+        const seed = seeded(gx, gz)
+        if (seed < .09) {
+          const park = new THREE.Mesh(new THREE.PlaneGeometry(68, 68), new THREE.MeshStandardMaterial({ color: '#2d5447', roughness: .96 }))
+          park.rotation.x = -Math.PI / 2
+          park.position.set(centerX, .12, centerZ)
+          park.receiveShadow = true
+          scene.add(park)
+          for (let t = 0; t < 7; t++) addTree(scene, centerX + (seeded(gx, gz, t) - .5) * 54, centerZ + (seeded(gx, gz, t + 19) - .5) * 54, .8 + seeded(gx, gz, t + 31) * .5)
+          continue
+        }
+        const width = 37 + Math.floor(seeded(gx, gz, 2) * 32)
+        const depth = 38 + Math.floor(seeded(gx, gz, 3) * 30)
+        const downtown = Math.max(Math.abs(gx), Math.abs(gz)) <= 2
+        const floors = downtown ? 7 + Math.floor(seeded(gx, gz, 4) * 12) : 3 + Math.floor(seeded(gx, gz, 4) * 6)
+        const label = labels[Math.floor(seeded(gx, gz, 5) * labels.length)]
+        const architecture = landmarkStyles[`${gx},${gz}`] ?? Math.floor(seed * 17)
+        const landmarkName = `${label} ${['TOWER', 'HOTEL', 'HOUSE', 'WORKS', 'ARCADE'][architecture % 5]}`
+        registerPortal(addBuilding(scene, blockers, sideDoorPoses, centerX + (seeded(gx, gz, 6) - .5) * 7, centerZ + (seeded(gx, gz, 7) - .5) * 7, width, depth, floors, architecture, landmarkName, buildingSurfaceMaps))
+        if (!downtown && seed > .64) {
+          const extraWidth = 18 + seeded(gx, gz, 9) * 13
+          const side = seeded(gx, gz, 10) > .5 ? 1 : -1
+          registerPortal(addBuilding(scene, blockers, sideDoorPoses, centerX + side * 25, centerZ + (seeded(gx, gz, 11) - .5) * 22, extraWidth, 22, 2 + Math.floor(seed * 4), Math.floor(seed * 23), labels[(Math.floor(seed * 7) + 3) % labels.length], buildingSurfaceMaps))
+        }
       }
     }
-    const sideDoorFrame = new THREE.InstancedMesh(new THREE.BoxGeometry(2.7, 4, .42), new THREE.MeshStandardMaterial({ color: '#70a9a9', roughness: .36, metalness: .46, emissive: '#204346', emissiveIntensity: .16 }), sideDoorPoses.length)
-    const sideDoorGlass = new THREE.InstancedMesh(new THREE.BoxGeometry(1.85, 3.1, .24), new THREE.MeshPhysicalMaterial({ color: '#acd1d0', metalness: .3, roughness: .12, transparent: true, opacity: .68, clearcoat: 1, clearcoatRoughness: .07 }), sideDoorPoses.length)
-    const sideDoorCanopy = new THREE.InstancedMesh(new THREE.BoxGeometry(3.1, .2, 1.8), new THREE.MeshStandardMaterial({ color: '#d7b47c', roughness: .68 }), sideDoorPoses.length)
-    const doorTransform = new THREE.Object3D()
-    sideDoorPoses.forEach((pose, index) => {
-      doorTransform.rotation.set(0, pose.rotationY, 0)
-      doorTransform.position.set(pose.x + pose.normalX * .3, 2.05, pose.z + pose.normalZ * .3)
-      doorTransform.updateMatrix(); sideDoorFrame.setMatrixAt(index, doorTransform.matrix)
-      doorTransform.position.set(pose.x + pose.normalX * .58, 1.65, pose.z + pose.normalZ * .58)
-      doorTransform.updateMatrix(); sideDoorGlass.setMatrixAt(index, doorTransform.matrix)
-      doorTransform.position.set(pose.x + pose.normalX * 1.15, 3.68, pose.z + pose.normalZ * 1.15)
-      doorTransform.updateMatrix(); sideDoorCanopy.setMatrixAt(index, doorTransform.matrix)
-    })
-    sideDoorFrame.castShadow = true
-    sideDoorGlass.castShadow = false
-    sideDoorCanopy.castShadow = true
-    scene.add(sideDoorFrame, sideDoorGlass, sideDoorCanopy)
-    const entranceMarkers = new THREE.InstancedMesh(new THREE.TorusGeometry(.48, .065, 8, 24), entranceMarkerMaterial, entranceMarkerPositions.length)
-    const entranceTransform = new THREE.Object3D()
-    entranceMarkerPositions.forEach((position, index) => {
-      entranceTransform.position.copy(position)
-      entranceTransform.rotation.set(Math.PI / 2, 0, 0)
-      entranceTransform.updateMatrix()
-      entranceMarkers.setMatrixAt(index, entranceTransform.matrix)
-    })
-    entranceMarkers.instanceMatrix.needsUpdate = true
-    entranceMarkers.castShadow = false
-    entranceMarkers.receiveShadow = false
-    scene.add(entranceMarkers)
+    if (sideDoorPoses.length > 0) {
+      const sideDoorFrame = new THREE.InstancedMesh(new THREE.BoxGeometry(2.7, 4, .42), new THREE.MeshStandardMaterial({ color: '#70a9a9', roughness: .36, metalness: .46, emissive: '#204346', emissiveIntensity: .16 }), sideDoorPoses.length)
+      const sideDoorGlass = new THREE.InstancedMesh(new THREE.BoxGeometry(1.85, 3.1, .24), new THREE.MeshPhysicalMaterial({ color: '#acd1d0', metalness: .3, roughness: .12, transparent: true, opacity: .68, clearcoat: 1, clearcoatRoughness: .07 }), sideDoorPoses.length)
+      const sideDoorCanopy = new THREE.InstancedMesh(new THREE.BoxGeometry(3.1, .2, 1.8), new THREE.MeshStandardMaterial({ color: '#d7b47c', roughness: .68 }), sideDoorPoses.length)
+      const doorTransform = new THREE.Object3D()
+      sideDoorPoses.forEach((pose, index) => {
+        doorTransform.rotation.set(0, pose.rotationY, 0)
+        doorTransform.position.set(pose.x + pose.normalX * .3, 2.05, pose.z + pose.normalZ * .3)
+        doorTransform.updateMatrix(); sideDoorFrame.setMatrixAt(index, doorTransform.matrix)
+        doorTransform.position.set(pose.x + pose.normalX * .58, 1.65, pose.z + pose.normalZ * .58)
+        doorTransform.updateMatrix(); sideDoorGlass.setMatrixAt(index, doorTransform.matrix)
+        doorTransform.position.set(pose.x + pose.normalX * 1.15, 3.68, pose.z + pose.normalZ * 1.15)
+        doorTransform.updateMatrix(); sideDoorCanopy.setMatrixAt(index, doorTransform.matrix)
+      })
+      sideDoorFrame.castShadow = true
+      sideDoorGlass.castShadow = false
+      sideDoorCanopy.castShadow = true
+      scene.add(sideDoorFrame, sideDoorGlass, sideDoorCanopy)
+    }
+    if (entranceMarkerPositions.length > 0) {
+      const entranceMarkers = new THREE.InstancedMesh(new THREE.TorusGeometry(.48, .065, 8, 24), entranceMarkerMaterial, entranceMarkerPositions.length)
+      const entranceTransform = new THREE.Object3D()
+      entranceMarkerPositions.forEach((position, index) => {
+        entranceTransform.position.copy(position)
+        entranceTransform.rotation.set(Math.PI / 2, 0, 0)
+        entranceTransform.updateMatrix()
+        entranceMarkers.setMatrixAt(index, entranceTransform.matrix)
+      })
+      entranceMarkers.instanceMatrix.needsUpdate = true
+      entranceMarkers.castShadow = false
+      entranceMarkers.receiveShadow = false
+      scene.add(entranceMarkers)
+    }
     for (let room = 0; room < 5; room++) interiors.push(addInterior(scene, room))
 
     // Sidewalk foot traffic gives the districts scale and life.
