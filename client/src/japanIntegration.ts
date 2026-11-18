@@ -1,5 +1,6 @@
 // Japan map and building integration
 import { JapanBuilding } from "../assets/buildings/japan/tokyo_tower.js";
+import * as THREE from "three";
 
 export const applyJapanIntegration = (scene: any) => {
   if (!scene) return;
@@ -8,7 +9,16 @@ export const applyJapanIntegration = (scene: any) => {
     .then(r => r.text())
     .then(mapText => {
       console.log("Japan map loaded", mapText);
-      // Add the placeholder building if the scene supports it
+
+      // ---- Visual placeholder for the map ----
+      const plane = new THREE.Mesh(
+        new THREE.PlaneGeometry(200, 200),
+        new THREE.MeshBasicMaterial({ color: 0x88aa88, side: THREE.DoubleSide })
+      );
+      plane.rotation.x = -Math.PI / 2; // lay flat on the ground
+      scene.add(plane);
+
+      // ---- Add the placeholder building ----
       if (scene.addBuilding) {
         scene.addBuilding(JapanBuilding);
       } else if (scene.add) {
