@@ -1,6 +1,6 @@
 // Japan map and building integration
 import { useEffect } from 'react';
-import { JapanBuilding } from '@/assets/buildings/japan/tokyo_tower.js';
+import { JapanBuilding } from '../../assets/buildings/japan/tokyo_tower.js';
 
 export const useJapanIntegration = (scene: any) => {
   useEffect(() => {
