@@ -1,48 +1,43 @@
-// Japan map and building integration
-import { JapanBuilding } from "../assets/buildings/japan/tokyo_tower.js";
-import * as THREE from "three";
+// Japan map integration using a free glTF model of Tokyo and simple placeholder geometry
+import { useEffect } from 'react';
+import { JapanCity } from '@/assets/models/japan/japan_city.js';
+import { RoadSegment } from '@/assets/models/japan/road_segment.js';
 
-export const applyJapanIntegration = (scene: any) => {
-  if (!scene) return;
-  // Load placeholder map text (you can replace with real data later)
-  fetch("/assets/maps/japan_map.txt")
-    .then(r => r.text())
-    .then(mapText => {
-      console.log("Japan map loaded", mapText);
+export const useJapanIntegration = (scene: any) =>
+  useEffect(() => {
+    if (!scene) return;
+    // Load the Tokyo glTF model and add to the scene
+    const { GLTFLoader } = require('three/examples/jsm/loaders/GLTFLoader');
+    const loader = new GLTFLoader();
+    loader.load(JapanCity.modelUrl, gltf => {
+      scene.add(gltf.scene);
+      console.log('Tokyo model loaded and added to scene');
+    }, undefined, err => {
+      console.error('Failed to load Tokyo model:', err);
+    });
 
-      // ---- Visual placeholder for the map ----
-      const plane = new THREE.Mesh(
-        new THREE.PlaneGeometry(200, 200),
-        new THREE.MeshBasicMaterial({ color: 0x88aa88, side: THREE.DoubleSide })
-      );
-      plane.rotation.x = -Math.PI / 2; // lay flat on the ground
-      scene.add(plane);
+    // ----- Load free road segment model -----
+    loader.load(RoadSegment.modelUrl, roadGltf => {
+      scene.add(roadGltf.scene);
+      console.log('Road segment model loaded and added to scene');
+    }, undefined, err => {
+      console.error('Failed to load road segment model:', err);
+    });
 
-      // ---- Add the placeholder building ----
-      if (scene.addBuilding) {
-        scene.addBuilding(JapanBuilding);
-      } else if (scene.add) {
-        const isGlb = JapanBuilding.modelUrl && JapanBuilding.modelUrl.toLowerCase().endsWith('.glb');
-        if (isGlb) {
-          // Dynamically import GLTFLoader only when we need it
-          import("three/examples/jsm/loaders/GLTFLoader")
-            .then(({ GLTFLoader }) => {
-              const loader = new GLTFLoader();
-              loader.load(JapanBuilding.modelUrl, gltf => {
-                scene.add(gltf.scene);
-              });
-            })
-            .catch(err => console.error("Failed to load GLTFLoader:", err));
-        } else {
-          // Simple box placeholder for the building
-          const box = new THREE.Mesh(
-            new THREE.BoxGeometry(5, 20, 5),
-            new THREE.MeshStandardMaterial({ color: 0xaaaaaa })
-          );
-          box.position.set(0, 10, 0);
-          scene.add(box);
-        }
-      }
-    })
-    .catch(err => console.error("Failed to load Japan map:", err));
-};
+    // ----- Simple placeholder tree -----
+    const trunk = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.1, 0.1, 1),
+      new THREE.MeshStandardMaterial({ color: 0x8b4513 })
+    );
+    const foliage = new THREE.Mesh(
+      new THREE.ConeGeometry(0.5, 1.5, 8),
+      new THREE.MeshStandardMaterial({ color: 0x228B22 })
+    );
+    foliage.position.y = 1.25;
+    const tree = new THREE.Group();
+    tree.add(trunk);
+    tree.add(foliage);
+    tree.position.set(5, 0, 5);
+    scene.add(tree);
+    console.log('Added placeholder tree');
+  }, [scene]);
