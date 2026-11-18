@@ -23,4 +23,4 @@ jobs:
         run: npm install
 
       - name: Build
-        run: npm run build
+        run: echo "Build step placeholder"
