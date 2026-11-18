@@ -936,19 +936,18 @@ export default function CityScene({ active, paused, objectives, onMission, onHud
       brickNormal: loadPbrTexture('/assets/materials/patterned_brick_wall_nor_gl_1k.jpg', false, 4, 4),
       brickRoughness: loadPbrTexture('/assets/materials/patterned_brick_wall_rough_1k.jpg', false, 4, 4),
     }
-    const groundMat = new THREE.MeshStandardMaterial({ color: '#526263', roughness: .92 })
+    const groundMat = new THREE.MeshStandardMaterial({ color: '#2d3436', roughness: .94 })
     const ground = new THREE.Mesh(new THREE.PlaneGeometry(1050, 1050), groundMat)
     ground.rotation.x = -Math.PI / 2
     ground.position.y = -.18
     ground.receiveShadow = true
     scene.add(ground)
 
-    // Asphalt should absorb light. The earlier clear-coat material made every road
-    // look like a glossy flat plane under a fake environment reflection.
-    const roadMat = new THREE.MeshStandardMaterial({ color: '#8b8074', map: asphaltMap, normalMap: asphaltNormal, normalScale: new THREE.Vector2(.48, .48), roughnessMap: asphaltRoughness, roughness: .92, metalness: .01 })
-    const curbMat = new THREE.MeshStandardMaterial({ color: '#999e98', roughness: .91, metalness: .02 })
-    const sidewalkMat = new THREE.MeshStandardMaterial({ color: '#747c77', roughness: .96, metalness: 0 })
-    const gutterMat = new THREE.MeshStandardMaterial({ color: '#3b4443', roughness: .98 })
+    // Japanese urban charcoal-asphalt road material with PBR normal & roughness maps
+    const roadMat = new THREE.MeshStandardMaterial({ color: '#353c40', map: asphaltMap, normalMap: asphaltNormal, normalScale: new THREE.Vector2(.48, .48), roughnessMap: asphaltRoughness, roughness: .86, metalness: .02 })
+    const curbMat = new THREE.MeshStandardMaterial({ color: '#889094', roughness: .88, metalness: .04 })
+    const sidewalkMat = new THREE.MeshStandardMaterial({ color: '#687074', roughness: .94, metalness: 0 })
+    const gutterMat = new THREE.MeshStandardMaterial({ color: '#242b2e', roughness: .98 })
     const roadEdgePoses: { x: number; z: number; rotation: number; normalX: number; normalZ: number }[] = []
     for (let k = -5; k <= 5; k++) {
       const p = k * 100
@@ -1006,10 +1005,9 @@ export default function CityScene({ active, paused, objectives, onMission, onHud
     }
     const marksGeometry = new THREE.BufferGeometry()
     marksGeometry.setAttribute('position', new THREE.Float32BufferAttribute(laneMarks, 3))
-    scene.add(new THREE.LineSegments(marksGeometry, new THREE.LineBasicMaterial({ color: '#d7bc7d', transparent: true, opacity: .75 })))
+    scene.add(new THREE.LineSegments(marksGeometry, new THREE.LineBasicMaterial({ color: '#f8fafc', transparent: true, opacity: .88 })))
 
-    // Instanced worn crosswalk paint adds real road scale at every junction
-    // without turning hundreds of small markings into hundreds of draw calls.
+    // Instanced crisp white Japanese pedestrian crossing paint (ゼブラ横断歩道)
     const crosswalkPoses: { x: number; z: number; rotation: number }[] = []
     for (let x = -500; x <= 500; x += 100) for (let z = -500; z <= 500; z += 100) {
       for (let stripe = -2; stripe <= 2; stripe++) {
@@ -1017,7 +1015,7 @@ export default function CityScene({ active, paused, objectives, onMission, onHud
         crosswalkPoses.push({ x: x - 12.2, z: z + stripe * 2.35, rotation: Math.PI / 2 })
       }
     }
-    const crosswalks = new THREE.InstancedMesh(new THREE.BoxGeometry(1.35, .018, 3.45), new THREE.MeshStandardMaterial({ color: '#c9c5b0', roughness: .95 }), crosswalkPoses.length)
+    const crosswalks = new THREE.InstancedMesh(new THREE.BoxGeometry(1.35, .018, 3.45), new THREE.MeshStandardMaterial({ color: '#f1f5f9', roughness: .85 }), crosswalkPoses.length)
     const crosswalkTransform = new THREE.Object3D()
     crosswalkPoses.forEach((pose, index) => {
       crosswalkTransform.position.set(pose.x, .044, pose.z)
