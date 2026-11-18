@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import { applyJapanIntegration } from "./japanIntegration";
+import { loadTokyoTiles } from "./tokyoIntegration";
 import * as THREE from 'three'
 import { RGBELoader } from 'three/addons/loaders/RGBELoader.js'
 
@@ -1136,7 +1136,7 @@ export default function CityScene({ active, paused, objectives, onMission, onHud
     const scene = new THREE.Scene();
     // Store scene in ref for integration
     sceneRef.current = scene;
-    applyJapanIntegration(sceneRef.current);
+    loadTokyoTiles(sceneRef.current);
     scene.background = new THREE.Color('#9db7b7')
     scene.fog = new THREE.FogExp2('#91aaa5', .00046)
     const camera = new THREE.PerspectiveCamera(62, 16 / 9, .1, 1000)
