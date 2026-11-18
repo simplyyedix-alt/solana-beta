@@ -8,6 +8,11 @@ import {
   createJapaneseGuardRail,
   createJapaneseTrafficCone
 } from './japanProps';
+import {
+  createTokyoCommercialBuilding,
+  createJapaneseKonbini,
+  createTokyoHighrise
+} from './japanArchitecture';
 
 export const JapanCity = {
   modelUrl: '/assets/models/japan/LittlestTokyo.glb'
@@ -32,10 +37,10 @@ export function applyJapanIntegration(scene: any, onStatus?: (status: string) =>
       try {
         const model = gltf.scene;
         model.name = 'JapanTokyoModel';
-        // Scale Tokyo model for scene scale
-        model.scale.set(0.02, 0.02, 0.02);
-        // Position model near the player starting area
-        model.position.set(0, 0, 0);
+        // Scale Tokyo model for district centerpiece
+        model.scale.set(0.035, 0.035, 0.035);
+        // Position Tokyo centerpiece in the central district block plaza
+        model.position.set(45, 0, 45);
 
         model.traverse((child: any) => {
           if (child.isMesh) {
@@ -140,6 +145,20 @@ export function applyJapanIntegration(scene: any, onStatus?: (status: string) =>
     // Japanese reflective road cones (カラーコーン)
     scene.add(createJapaneseTrafficCone(-5.5, -0.5));
     scene.add(createJapaneseTrafficCone(-5.5, 1.5));
+
+    // Tokyo Japanese Architecture: Konbini, Commercial Neon Towers & Modern High-rises
+    // Japanese Konbini (Convenience Store) facing the intersection
+    scene.add(createJapaneseKonbini(45, -45, 0));
+
+    // Tokyo commercial buildings with illuminated neon kanji signs
+    scene.add(createTokyoCommercialBuilding(-45, 45, 5, Math.PI / 2));
+    scene.add(createTokyoCommercialBuilding(-45, -45, 4, 0));
+
+    // Tokyo modern glass high-rise towers for the skyline
+    scene.add(createTokyoHighrise(145, 45, 64, 0));
+    scene.add(createTokyoHighrise(-145, 45, 56, Math.PI / 2));
+    scene.add(createTokyoHighrise(145, -145, 72, 0));
+    scene.add(createTokyoHighrise(-145, -145, 58, 0));
   } catch (err) {
     console.error('Error creating Japan environment props:', err);
   }
