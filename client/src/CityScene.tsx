@@ -573,8 +573,25 @@ function makePerson(variant = 0, player = false) {
 
 function makeTrafficCar(color: string, variant = 0) {
   const group = new THREE.Group()
-  const paint = new THREE.MeshPhysicalMaterial({ color, metalness: .32, roughness: .38, clearcoat: .32, clearcoatRoughness: .24 })
-  const glass = new THREE.MeshPhysicalMaterial({ color: '#14232d', metalness: .12, roughness: .28, clearcoat: .18, clearcoatRoughness: .2 })
+  // AAA Automotive paint with deep metallic clearcoat & environmental reflections
+  const paint = new THREE.MeshPhysicalMaterial({
+    color,
+    metalness: .86,
+    roughness: .15,
+    clearcoat: 1.0,
+    clearcoatRoughness: .05,
+    reflectivity: .92,
+  })
+  // Tinted reflective automotive glass
+  const glass = new THREE.MeshPhysicalMaterial({
+    color: '#08121a',
+    metalness: .15,
+    roughness: .05,
+    clearcoat: 1.0,
+    clearcoatRoughness: .03,
+    transparent: true,
+    opacity: .78,
+  })
   const carType = variant % 3
   const profiles = [
     [[-2.72,.28],[2.65,.28],[2.78,.78],[2.44,1.42],[1.48,1.56],[.94,2.17],[-.96,2.17],[-1.62,1.55],[-2.55,1.38]],
@@ -627,12 +644,12 @@ function makeTrafficCar(color: string, variant = 0) {
   rearGlass.position.set(-1.35, (cabinTop + cabinBase) / 2, 0)
   rearGlass.rotation.z = .52
   group.add(rearGlass)
-  const chrome = new THREE.MeshStandardMaterial({ color: '#b5b9ad', metalness: .9, roughness: .2 })
+  const chrome = new THREE.MeshStandardMaterial({ color: '#d8dee3', metalness: .98, roughness: .1 })
   const grill = new THREE.Mesh(new THREE.BoxGeometry(.08, .42, 1.18), chrome)
   grill.position.set(2.86, carType === 2 ? .73 : .91, 0)
   group.add(grill)
-  const lightFront = new THREE.MeshBasicMaterial({ color: '#ffe9b8', toneMapped: false })
-  const lightRear = new THREE.MeshBasicMaterial({ color: '#ff534b', toneMapped: false })
+  const lightFront = new THREE.MeshBasicMaterial({ color: '#f0f8ff', toneMapped: false })
+  const lightRear = new THREE.MeshBasicMaterial({ color: '#ff1e1e', toneMapped: false })
   for (const side of [-1, 1]) {
     const headlamp = new THREE.Mesh(new THREE.BoxGeometry(.1, .27, .52), lightFront)
     headlamp.position.set(2.86, carType === 2 ? 1.0 : 1.34, side * .82)
