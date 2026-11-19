@@ -1,5 +1,7 @@
 // extraTokyoFeatures.ts – adds fun extra geometry (river, bridges, random tall boxes)
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader';
+import { buildingAssets } from './buildingAssets';
 
 /**
  * Adds a simple river (blue plane) and a few crazy bridges / tall boxes.
@@ -43,21 +45,25 @@ export const addExtraFeatures = (scene: THREE.Scene) => {
     scene.add(group);
   }
 
-  // ---- Random crazy buildings (tall boxes) ----
-  const buildingMaterial = new THREE.MeshStandardMaterial({ color: 0x999999 });
-  for (let i = 0; i < 20; i++) {
-    const width = 30 + Math.random() * 70;
-    const depth = 30 + Math.random() * 70;
-    const height = 100 + Math.random() * 300;
-    const geom = new THREE.BoxGeometry(width, height, depth);
-    const mesh = new THREE.Mesh(geom, buildingMaterial);
-    // random position around origin, avoid overlapping river area
-    const x = (Math.random() - 0.5) * 2000;
-    const z = (Math.random() - 0.5) * 2000;
-    if (Math.abs(z + 500) < 150) continue; // keep clear of river center line
-    mesh.position.set(x, height / 2, z);
-    scene.add(mesh);
-  }
+  // ---- Real building assets (load GLTF models) ----
+  
+  const loader = new GLTFLoader();
+  buildingAssets.forEach((asset) => {
+    loader.load(asset.url, (gltf) => {
+      const model = gltf.scene;
+      // Random placement, keep clear of river
+      const x = (Math.random() - 0.5) * 2000;
+      const z = (Math.random() - 0.5) * 2000;
+      if (Math.abs(z + 500) < 150) return; // skip river area
+      model.position.set(x, 0, z);
+      // Optionally random scale
+      const scale = 0.5 + Math.random() * 1.5;
+      model.scale.set(scale, scale, scale);
+      scene.add(model);
+    }, undefined, (error) => {
+      console.error('Failed to load asset', asset.name, error);
+    });
+  });
 
-  console.log('✅ Added extra river, bridges, and crazy buildings');
+  console.log('✅ Added extra river, bridges, and real building assets');
 };
