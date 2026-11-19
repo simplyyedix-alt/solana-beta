@@ -1,4 +1,6 @@
 import { useEffect, useRef } from 'react'
+import { loadTokyoTiles } from "./tokyoIntegration";
+import { addExtraFeatures } from "./extraTokyoFeatures";
 import * as THREE from 'three'
 import { RGBELoader } from 'three/addons/loaders/RGBELoader.js'
 
@@ -570,10 +572,314 @@ function makePerson(variant = 0, player = false) {
   return root
 }
 
-function makeTrafficCar(color: string, variant = 0) {
+function makeVagnerHypercar(color: string) {
   const group = new THREE.Group()
-  const paint = new THREE.MeshPhysicalMaterial({ color, metalness: .32, roughness: .38, clearcoat: .32, clearcoatRoughness: .24 })
-  const glass = new THREE.MeshPhysicalMaterial({ color: '#14232d', metalness: .12, roughness: .28, clearcoat: .18, clearcoatRoughness: .2 })
+
+  // High-end automotive metallic clearcoat paint
+  const paint = new THREE.MeshPhysicalMaterial({
+    color,
+    metalness: .90,
+    roughness: .12,
+    clearcoat: 1.0,
+    clearcoatRoughness: .04,
+    reflectivity: .96,
+  })
+
+  // Twill carbon-fiber composite
+  const carbon = new THREE.MeshPhysicalMaterial({
+    color: '#131417',
+    metalness: .42,
+    roughness: .32,
+    clearcoat: .8,
+    clearcoatRoughness: .12,
+  })
+
+  // Dark stealth canopy glass
+  const glass = new THREE.MeshPhysicalMaterial({
+    color: '#060a0f',
+    metalness: .2,
+    roughness: .04,
+    clearcoat: 1.0,
+    clearcoatRoughness: .03,
+    transparent: true,
+    opacity: .85,
+  })
+
+  const titanium = new THREE.MeshStandardMaterial({
+    color: '#555f68',
+    metalness: .96,
+    roughness: .2,
+  })
+
+  const ledHeadlight = new THREE.MeshBasicMaterial({ color: '#f0f9ff', toneMapped: false })
+  const ledTaillight = new THREE.MeshBasicMaterial({ color: '#ff1414', toneMapped: false })
+  const brakeDiscMat = new THREE.MeshStandardMaterial({ color: '#7a8288', metalness: .92, roughness: .28 })
+  const caliperMat = new THREE.MeshStandardMaterial({ color: '#ffcc00', roughness: .3, metalness: .4 })
+  const tireMat = new THREE.MeshStandardMaterial({ color: '#111315', roughness: .86 })
+  const rimMat = new THREE.MeshStandardMaterial({ color: '#25292e', metalness: .94, roughness: .16 })
+
+  // 1. Central aerodynamic monocoque tub and belly pan
+  const bellyGeom = new THREE.BoxGeometry(4.3, .08, 1.82)
+  const belly = new THREE.Mesh(bellyGeom, carbon)
+  belly.position.set(0, .14, 0)
+  belly.castShadow = true
+  group.add(belly)
+
+  // 2. Teardrop cockpit canopy (Aston Martin Valkyrie / Vagner signature)
+  const canopyShape = new THREE.Shape()
+  canopyShape.moveTo(-.85, .52)
+  canopyShape.lineTo(-.42, .98)
+  canopyShape.lineTo(.28, .98)
+  canopyShape.lineTo(.92, .54)
+  canopyShape.lineTo(.65, .44)
+  canopyShape.lineTo(-.78, .44)
+  canopyShape.closePath()
+  const canopyGeom = new THREE.ExtrudeGeometry(canopyShape, {
+    depth: 1.28,
+    bevelEnabled: true,
+    bevelSegments: 4,
+    steps: 1,
+    bevelSize: .08,
+    bevelThickness: .08,
+  })
+  canopyGeom.translate(0, 0, -1.28 / 2)
+  const canopy = new THREE.Mesh(canopyGeom, glass)
+  canopy.castShadow = true
+  group.add(canopy)
+
+  // 3. Central roof intake snorkel & aerodynamic dorsal shark fin
+  const snorkelGeom = new THREE.BoxGeometry(.85, .12, .28)
+  const snorkel = new THREE.Mesh(snorkelGeom, carbon)
+  snorkel.position.set(.05, 1.05, 0)
+  snorkel.castShadow = true
+  group.add(snorkel)
+
+  const sharkFinGeom = new THREE.BoxGeometry(1.2, .24, .035)
+  const sharkFin = new THREE.Mesh(sharkFinGeom, carbon)
+  sharkFin.position.set(-.82, .92, 0)
+  sharkFin.castShadow = true
+  group.add(sharkFin)
+
+  // 4. Low dropped front nose & aerodynamic vented bonnet (hood)
+  const noseShape = new THREE.Shape()
+  noseShape.moveTo(.6, .45)
+  noseShape.lineTo(1.85, .48)
+  noseShape.lineTo(2.26, .32)
+  noseShape.lineTo(2.28, .18)
+  noseShape.lineTo(.6, .18)
+  noseShape.closePath()
+  const noseGeom = new THREE.ExtrudeGeometry(noseShape, {
+    depth: 1.96,
+    bevelEnabled: true,
+    bevelSegments: 4,
+    steps: 1,
+    bevelSize: .06,
+    bevelThickness: .06,
+  })
+  noseGeom.translate(0, 0, -1.96 / 2)
+  const nose = new THREE.Mesh(noseGeom, paint)
+  nose.castShadow = true
+  group.add(nose)
+
+  // Hood central air extraction vents (dual black recessed flow channels)
+  for (const side of [-1, 1]) {
+    const ventGeom = new THREE.BoxGeometry(.72, .04, .28)
+    const vent = new THREE.Mesh(ventGeom, carbon)
+    vent.position.set(1.42, .46, side * .38)
+    group.add(vent)
+  }
+
+  // Dual-tier carbon front splitter with lateral winglets
+  const splitterGeom = new THREE.BoxGeometry(.65, .04, 2.18)
+  const splitter = new THREE.Mesh(splitterGeom, carbon)
+  splitter.position.set(2.05, .11, 0)
+  splitter.castShadow = true
+  group.add(splitter)
+
+  for (const side of [-1, 1]) {
+    const wingletGeom = new THREE.BoxGeometry(.32, .18, .04)
+    const winglet = new THREE.Mesh(wingletGeom, carbon)
+    winglet.position.set(2.18, .18, side * 1.08)
+    group.add(winglet)
+  }
+
+  // Thin aggressive LED headlights
+  for (const side of [-1, 1]) {
+    const headlightGeom = new THREE.BoxGeometry(.28, .05, .32)
+    const headlight = new THREE.Mesh(headlightGeom, ledHeadlight)
+    headlight.position.set(2.16, .44, side * .78)
+    headlight.rotation.y = side * .22
+    group.add(headlight)
+  }
+
+  // 5. Rear muscular engine deck & quarter panels
+  const rearShape = new THREE.Shape()
+  rearShape.moveTo(-.65, .45)
+  rearShape.lineTo(-1.8, .74)
+  rearShape.lineTo(-2.28, .56)
+  rearShape.lineTo(-2.28, .18)
+  rearShape.lineTo(-.65, .18)
+  rearShape.closePath()
+  const rearGeom = new THREE.ExtrudeGeometry(rearShape, {
+    depth: 2.06,
+    bevelEnabled: true,
+    bevelSegments: 4,
+    steps: 1,
+    bevelSize: .07,
+    bevelThickness: .07,
+  })
+  rearGeom.translate(0, 0, -2.06 / 2)
+  const rearDeck = new THREE.Mesh(rearGeom, paint)
+  rearDeck.castShadow = true
+  group.add(rearDeck)
+
+  // 6. Side aerodynamic flow-through tunnels & carbon side skirts
+  for (const side of [-1, 1]) {
+    const skirtGeom = new THREE.BoxGeometry(2.3, .04, .22)
+    const skirt = new THREE.Mesh(skirtGeom, carbon)
+    skirt.position.set(0, .11, side * 1.05)
+    group.add(skirt)
+
+    const ductGeom = new THREE.BoxGeometry(1.4, .26, .12)
+    const duct = new THREE.Mesh(ductGeom, carbon)
+    duct.position.set(.1, .32, side * .72)
+    group.add(duct)
+
+    const mirrorStem = new THREE.Mesh(new THREE.CylinderGeometry(.015, .015, .18), carbon)
+    mirrorStem.position.set(.35, .68, side * .74)
+    mirrorStem.rotation.z = side * .35
+    group.add(mirrorStem)
+
+    const mirrorHead = new THREE.Mesh(new THREE.BoxGeometry(.24, .08, .1), carbon)
+    mirrorHead.position.set(.35, .76, side * .84)
+    group.add(mirrorHead)
+  }
+
+  // 7. Rear carbon-fiber aero diffuser with 4 vertical strakes
+  const diffuserGeom = new THREE.BoxGeometry(.85, .12, 1.84)
+  const diffuser = new THREE.Mesh(diffuserGeom, carbon)
+  diffuser.position.set(-2.0, .15, 0)
+  diffuser.rotation.z = -.18
+  diffuser.castShadow = true
+  group.add(diffuser)
+
+  for (let s = -2; s <= 2; s++) {
+    if (s === 0) continue
+    const strakeGeom = new THREE.BoxGeometry(.74, .16, .03)
+    const strake = new THREE.Mesh(strakeGeom, carbon)
+    strake.position.set(-2.0, .18, s * .38)
+    strake.rotation.z = -.18
+    group.add(strake)
+  }
+
+  // Dual high-mounted titanium exhaust tips
+  for (const side of [-1, 1]) {
+    const exhaust = new THREE.Mesh(new THREE.CylinderGeometry(.06, .06, .22, 16), titanium)
+    exhaust.rotation.z = Math.PI / 2
+    exhaust.position.set(-2.28, .54, side * .14)
+    group.add(exhaust)
+  }
+
+  // Full-width continuous curved LED taillight blade
+  const taillightGeom = new THREE.BoxGeometry(.06, .04, 1.88)
+  const taillight = new THREE.Mesh(taillightGeom, ledTaillight)
+  taillight.position.set(-2.3, .63, 0)
+  group.add(taillight)
+
+  // 8. Swan-neck rear GT Wing
+  for (const side of [-1, 1]) {
+    const pylonGeom = new THREE.BoxGeometry(.28, .36, .035)
+    const pylon = new THREE.Mesh(pylonGeom, carbon)
+    pylon.position.set(-1.86, .86, side * .44)
+    pylon.rotation.z = .32
+    group.add(pylon)
+  }
+  const wingAirfoilGeom = new THREE.BoxGeometry(.38, .04, 2.05)
+  const wingAirfoil = new THREE.Mesh(wingAirfoilGeom, carbon)
+  wingAirfoil.position.set(-1.95, 1.05, 0)
+  wingAirfoil.rotation.z = -.08
+  wingAirfoil.castShadow = true
+  group.add(wingAirfoil)
+
+  for (const side of [-1, 1]) {
+    const endplateGeom = new THREE.BoxGeometry(.44, .24, .03)
+    const endplate = new THREE.Mesh(endplateGeom, carbon)
+    endplate.position.set(-1.95, 1.05, side * 1.03)
+    group.add(endplate)
+  }
+
+  // 9. High-performance racing wheels with Brembo brake calipers & rotors
+  const wheels: any[] = []
+  const wheelRadius = .38
+  const frontX = 1.48
+  const rearX = -1.48
+  const trackWidthFront = 2.1
+  const trackWidthRear = 2.18
+
+  const wheelPositions = [
+    { x: frontX, z: -trackWidthFront / 2, width: .26 },
+    { x: frontX, z: trackWidthFront / 2, width: .26 },
+    { x: rearX, z: -trackWidthRear / 2, width: .32 },
+    { x: rearX, z: trackWidthRear / 2, width: .32 },
+  ]
+
+  wheelPositions.forEach(pos => {
+    // Tire
+    const tire = new THREE.Mesh(new THREE.CylinderGeometry(wheelRadius, wheelRadius, pos.width, 24), tireMat)
+    tire.rotation.x = Math.PI / 2
+    tire.position.set(pos.x, wheelRadius + .02, pos.z)
+    tire.castShadow = true
+    group.add(tire)
+
+    // Forged alloy rim
+    const rim = new THREE.Mesh(new THREE.CylinderGeometry(wheelRadius * .68, wheelRadius * .68, pos.width + .01, 20), rimMat)
+    rim.rotation.x = Math.PI / 2
+    rim.position.set(pos.x, wheelRadius + .02, pos.z)
+    group.add(rim)
+
+    // Carbon-ceramic brake rotor
+    const rotor = new THREE.Mesh(new THREE.CylinderGeometry(wheelRadius * .52, wheelRadius * .52, .04, 16), brakeDiscMat)
+    rotor.rotation.x = Math.PI / 2
+    rotor.position.set(pos.x, wheelRadius + .02, pos.z)
+    group.add(rotor)
+
+    // Yellow Brembo brake caliper (fixed, mounted at top of disc)
+    const caliper = new THREE.Mesh(new THREE.BoxGeometry(.14, .08, .07), caliperMat)
+    caliper.position.set(pos.x, wheelRadius + .14, pos.z)
+    group.add(caliper)
+
+    wheels.push(tire, rim)
+  })
+
+  group.userData.modelName = 'DEWBAUCHEE VAGNER'
+  group.userData.wheels = wheels
+  return group
+}
+
+function makeTrafficCar(color: string, variant = 0) {
+  if (variant % 4 === 3) {
+    return makeVagnerHypercar(color)
+  }
+  const group = new THREE.Group()
+  // AAA Automotive paint with deep metallic clearcoat & environmental reflections
+  const paint = new THREE.MeshPhysicalMaterial({
+    color,
+    metalness: .86,
+    roughness: .15,
+    clearcoat: 1.0,
+    clearcoatRoughness: .05,
+    reflectivity: .92,
+  })
+  // Tinted reflective automotive glass
+  const glass = new THREE.MeshPhysicalMaterial({
+    color: '#08121a',
+    metalness: .15,
+    roughness: .05,
+    clearcoat: 1.0,
+    clearcoatRoughness: .03,
+    transparent: true,
+    opacity: .78,
+  })
   const carType = variant % 3
   const profiles = [
     [[-2.72,.28],[2.65,.28],[2.78,.78],[2.44,1.42],[1.48,1.56],[.94,2.17],[-.96,2.17],[-1.62,1.55],[-2.55,1.38]],
@@ -626,12 +932,12 @@ function makeTrafficCar(color: string, variant = 0) {
   rearGlass.position.set(-1.35, (cabinTop + cabinBase) / 2, 0)
   rearGlass.rotation.z = .52
   group.add(rearGlass)
-  const chrome = new THREE.MeshStandardMaterial({ color: '#b5b9ad', metalness: .9, roughness: .2 })
+  const chrome = new THREE.MeshStandardMaterial({ color: '#d8dee3', metalness: .98, roughness: .1 })
   const grill = new THREE.Mesh(new THREE.BoxGeometry(.08, .42, 1.18), chrome)
   grill.position.set(2.86, carType === 2 ? .73 : .91, 0)
   group.add(grill)
-  const lightFront = new THREE.MeshBasicMaterial({ color: '#ffe9b8', toneMapped: false })
-  const lightRear = new THREE.MeshBasicMaterial({ color: '#ff534b', toneMapped: false })
+  const lightFront = new THREE.MeshBasicMaterial({ color: '#f0f8ff', toneMapped: false })
+  const lightRear = new THREE.MeshBasicMaterial({ color: '#ff1e1e', toneMapped: false })
   for (const side of [-1, 1]) {
     const headlamp = new THREE.Mesh(new THREE.BoxGeometry(.1, .27, .52), lightFront)
     headlamp.position.set(2.86, carType === 2 ? 1.0 : 1.34, side * .82)
@@ -787,7 +1093,8 @@ function districtAt(x: number, z: number) {
 }
 
 export default function CityScene({ active, paused, objectives, onMission, onHud, onError, onReady }: CitySceneProps) {
-  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const sceneRef = useRef<any>(null);
   const missionCallback = useRef(onMission)
   const hudCallback = useRef(onHud)
   const errorCallback = useRef(onError)
@@ -827,7 +1134,11 @@ export default function CityScene({ active, paused, objectives, onMission, onHud
     renderer.toneMapping = THREE.ACESFilmicToneMapping
     renderer.toneMappingExposure = 1.08
 
-    const scene = new THREE.Scene()
+    const scene = new THREE.Scene();
+    // Store scene in ref for integration
+    sceneRef.current = scene;
+    loadTokyoTiles(sceneRef.current);
+    addExtraFeatures(sceneRef.current);
     scene.background = new THREE.Color('#9db7b7')
     scene.fog = new THREE.FogExp2('#91aaa5', .00046)
     const camera = new THREE.PerspectiveCamera(62, 16 / 9, .1, 1000)
@@ -931,19 +1242,29 @@ export default function CityScene({ active, paused, objectives, onMission, onHud
       brickNormal: loadPbrTexture('/assets/materials/patterned_brick_wall_nor_gl_1k.jpg', false, 4, 4),
       brickRoughness: loadPbrTexture('/assets/materials/patterned_brick_wall_rough_1k.jpg', false, 4, 4),
     }
-    const groundMat = new THREE.MeshStandardMaterial({ color: '#526263', roughness: .92 })
+    const groundMat = new THREE.MeshStandardMaterial({ color: '#2d3436', roughness: .94 })
     const ground = new THREE.Mesh(new THREE.PlaneGeometry(1050, 1050), groundMat)
     ground.rotation.x = -Math.PI / 2
     ground.position.y = -.18
     ground.receiveShadow = true
     scene.add(ground)
 
-    // Asphalt should absorb light. The earlier clear-coat material made every road
-    // look like a glossy flat plane under a fake environment reflection.
-    const roadMat = new THREE.MeshStandardMaterial({ color: '#8b8074', map: asphaltMap, normalMap: asphaltNormal, normalScale: new THREE.Vector2(.48, .48), roughnessMap: asphaltRoughness, roughness: .92, metalness: .01 })
-    const curbMat = new THREE.MeshStandardMaterial({ color: '#999e98', roughness: .91, metalness: .02 })
-    const sidewalkMat = new THREE.MeshStandardMaterial({ color: '#747c77', roughness: .96, metalness: 0 })
-    const gutterMat = new THREE.MeshStandardMaterial({ color: '#3b4443', roughness: .98 })
+    // Japanese urban charcoal-asphalt road material with GTA-style specular sheen, micro-bump normals, and clearcoat
+    const roadMat = new THREE.MeshPhysicalMaterial({
+      color: '#2c3135',
+      map: asphaltMap,
+      normalMap: asphaltNormal,
+      normalScale: new THREE.Vector2(0.85, 0.85),
+      roughnessMap: asphaltRoughness,
+      roughness: 0.52,
+      metalness: 0.08,
+      clearcoat: 0.28,
+      clearcoatRoughness: 0.32,
+      reflectivity: 0.5,
+    })
+    const curbMat = new THREE.MeshStandardMaterial({ color: '#7a8286', roughness: .75, metalness: .08 })
+    const sidewalkMat = new THREE.MeshStandardMaterial({ color: '#5e6569', roughness: .82, metalness: .02 })
+    const gutterMat = new THREE.MeshStandardMaterial({ color: '#1c2225', roughness: .65, metalness: .12 })
     const roadEdgePoses: { x: number; z: number; rotation: number; normalX: number; normalZ: number }[] = []
     for (let k = -5; k <= 5; k++) {
       const p = k * 100
@@ -1001,10 +1322,9 @@ export default function CityScene({ active, paused, objectives, onMission, onHud
     }
     const marksGeometry = new THREE.BufferGeometry()
     marksGeometry.setAttribute('position', new THREE.Float32BufferAttribute(laneMarks, 3))
-    scene.add(new THREE.LineSegments(marksGeometry, new THREE.LineBasicMaterial({ color: '#d7bc7d', transparent: true, opacity: .75 })))
+    scene.add(new THREE.LineSegments(marksGeometry, new THREE.LineBasicMaterial({ color: '#f8fafc', transparent: true, opacity: .88 })))
 
-    // Instanced worn crosswalk paint adds real road scale at every junction
-    // without turning hundreds of small markings into hundreds of draw calls.
+    // Instanced crisp white Japanese pedestrian crossing paint (ゼブラ横断歩道)
     const crosswalkPoses: { x: number; z: number; rotation: number }[] = []
     for (let x = -500; x <= 500; x += 100) for (let z = -500; z <= 500; z += 100) {
       for (let stripe = -2; stripe <= 2; stripe++) {
@@ -1012,7 +1332,14 @@ export default function CityScene({ active, paused, objectives, onMission, onHud
         crosswalkPoses.push({ x: x - 12.2, z: z + stripe * 2.35, rotation: Math.PI / 2 })
       }
     }
-    const crosswalks = new THREE.InstancedMesh(new THREE.BoxGeometry(1.35, .018, 3.45), new THREE.MeshStandardMaterial({ color: '#c9c5b0', roughness: .95 }), crosswalkPoses.length)
+    const crosswalkMat = new THREE.MeshPhysicalMaterial({
+      color: '#f8fafc',
+      roughness: 0.45,
+      metalness: 0.04,
+      clearcoat: 0.22,
+      clearcoatRoughness: 0.25,
+    })
+    const crosswalks = new THREE.InstancedMesh(new THREE.BoxGeometry(1.35, .018, 3.45), crosswalkMat, crosswalkPoses.length)
     const crosswalkTransform = new THREE.Object3D()
     crosswalkPoses.forEach((pose, index) => {
       crosswalkTransform.position.set(pose.x, .044, pose.z)
@@ -1097,62 +1424,70 @@ export default function CityScene({ active, paused, objectives, onMission, onHud
         entranceMarkerPositions.push(new THREE.Vector3(portal.x, .14, portal.z))
       }
     }
-    for (let gx = -5; gx < 5; gx++) for (let gz = -5; gz < 5; gz++) {
-      const centerX = gx * 100 + 50
-      const centerZ = gz * 100 + 50
-      const seed = seeded(gx, gz)
-      if (seed < .09) {
-        const park = new THREE.Mesh(new THREE.PlaneGeometry(68, 68), new THREE.MeshStandardMaterial({ color: '#2d5447', roughness: .96 }))
-        park.rotation.x = -Math.PI / 2
-        park.position.set(centerX, .12, centerZ)
-        park.receiveShadow = true
-        scene.add(park)
-        for (let t = 0; t < 7; t++) addTree(scene, centerX + (seeded(gx, gz, t) - .5) * 54, centerZ + (seeded(gx, gz, t + 19) - .5) * 54, .8 + seeded(gx, gz, t + 31) * .5)
-        continue
-      }
-      const width = 37 + Math.floor(seeded(gx, gz, 2) * 32)
-      const depth = 38 + Math.floor(seeded(gx, gz, 3) * 30)
-      const downtown = Math.max(Math.abs(gx), Math.abs(gz)) <= 2
-      const floors = downtown ? 7 + Math.floor(seeded(gx, gz, 4) * 12) : 3 + Math.floor(seeded(gx, gz, 4) * 6)
-      const label = labels[Math.floor(seeded(gx, gz, 5) * labels.length)]
-      const architecture = landmarkStyles[`${gx},${gz}`] ?? Math.floor(seed * 17)
-      const landmarkName = `${label} ${['TOWER', 'HOTEL', 'HOUSE', 'WORKS', 'ARCADE'][architecture % 5]}`
-      registerPortal(addBuilding(scene, blockers, sideDoorPoses, centerX + (seeded(gx, gz, 6) - .5) * 7, centerZ + (seeded(gx, gz, 7) - .5) * 7, width, depth, floors, architecture, landmarkName, buildingSurfaceMaps))
-      if (!downtown && seed > .64) {
-        const extraWidth = 18 + seeded(gx, gz, 9) * 13
-        const side = seeded(gx, gz, 10) > .5 ? 1 : -1
-        registerPortal(addBuilding(scene, blockers, sideDoorPoses, centerX + side * 25, centerZ + (seeded(gx, gz, 11) - .5) * 22, extraWidth, 22, 2 + Math.floor(seed * 4), Math.floor(seed * 23), labels[(Math.floor(seed * 7) + 3) % labels.length], buildingSurfaceMaps))
+    // Disable legacy procedural box buildings to make room for realistic Japan city models
+    const ENABLE_PROCEDURAL_BOX_BUILDINGS = false
+    if (ENABLE_PROCEDURAL_BOX_BUILDINGS) {
+      for (let gx = -5; gx < 5; gx++) for (let gz = -5; gz < 5; gz++) {
+        const centerX = gx * 100 + 50
+        const centerZ = gz * 100 + 50
+        const seed = seeded(gx, gz)
+        if (seed < .09) {
+          const park = new THREE.Mesh(new THREE.PlaneGeometry(68, 68), new THREE.MeshStandardMaterial({ color: '#2d5447', roughness: .96 }))
+          park.rotation.x = -Math.PI / 2
+          park.position.set(centerX, .12, centerZ)
+          park.receiveShadow = true
+          scene.add(park)
+          for (let t = 0; t < 7; t++) addTree(scene, centerX + (seeded(gx, gz, t) - .5) * 54, centerZ + (seeded(gx, gz, t + 19) - .5) * 54, .8 + seeded(gx, gz, t + 31) * .5)
+          continue
+        }
+        const width = 37 + Math.floor(seeded(gx, gz, 2) * 32)
+        const depth = 38 + Math.floor(seeded(gx, gz, 3) * 30)
+        const downtown = Math.max(Math.abs(gx), Math.abs(gz)) <= 2
+        const floors = downtown ? 7 + Math.floor(seeded(gx, gz, 4) * 12) : 3 + Math.floor(seeded(gx, gz, 4) * 6)
+        const label = labels[Math.floor(seeded(gx, gz, 5) * labels.length)]
+        const architecture = landmarkStyles[`${gx},${gz}`] ?? Math.floor(seed * 17)
+        const landmarkName = `${label} ${['TOWER', 'HOTEL', 'HOUSE', 'WORKS', 'ARCADE'][architecture % 5]}`
+        registerPortal(addBuilding(scene, blockers, sideDoorPoses, centerX + (seeded(gx, gz, 6) - .5) * 7, centerZ + (seeded(gx, gz, 7) - .5) * 7, width, depth, floors, architecture, landmarkName, buildingSurfaceMaps))
+        if (!downtown && seed > .64) {
+          const extraWidth = 18 + seeded(gx, gz, 9) * 13
+          const side = seeded(gx, gz, 10) > .5 ? 1 : -1
+          registerPortal(addBuilding(scene, blockers, sideDoorPoses, centerX + side * 25, centerZ + (seeded(gx, gz, 11) - .5) * 22, extraWidth, 22, 2 + Math.floor(seed * 4), Math.floor(seed * 23), labels[(Math.floor(seed * 7) + 3) % labels.length], buildingSurfaceMaps))
+        }
       }
     }
-    const sideDoorFrame = new THREE.InstancedMesh(new THREE.BoxGeometry(2.7, 4, .42), new THREE.MeshStandardMaterial({ color: '#70a9a9', roughness: .36, metalness: .46, emissive: '#204346', emissiveIntensity: .16 }), sideDoorPoses.length)
-    const sideDoorGlass = new THREE.InstancedMesh(new THREE.BoxGeometry(1.85, 3.1, .24), new THREE.MeshPhysicalMaterial({ color: '#acd1d0', metalness: .3, roughness: .12, transparent: true, opacity: .68, clearcoat: 1, clearcoatRoughness: .07 }), sideDoorPoses.length)
-    const sideDoorCanopy = new THREE.InstancedMesh(new THREE.BoxGeometry(3.1, .2, 1.8), new THREE.MeshStandardMaterial({ color: '#d7b47c', roughness: .68 }), sideDoorPoses.length)
-    const doorTransform = new THREE.Object3D()
-    sideDoorPoses.forEach((pose, index) => {
-      doorTransform.rotation.set(0, pose.rotationY, 0)
-      doorTransform.position.set(pose.x + pose.normalX * .3, 2.05, pose.z + pose.normalZ * .3)
-      doorTransform.updateMatrix(); sideDoorFrame.setMatrixAt(index, doorTransform.matrix)
-      doorTransform.position.set(pose.x + pose.normalX * .58, 1.65, pose.z + pose.normalZ * .58)
-      doorTransform.updateMatrix(); sideDoorGlass.setMatrixAt(index, doorTransform.matrix)
-      doorTransform.position.set(pose.x + pose.normalX * 1.15, 3.68, pose.z + pose.normalZ * 1.15)
-      doorTransform.updateMatrix(); sideDoorCanopy.setMatrixAt(index, doorTransform.matrix)
-    })
-    sideDoorFrame.castShadow = true
-    sideDoorGlass.castShadow = false
-    sideDoorCanopy.castShadow = true
-    scene.add(sideDoorFrame, sideDoorGlass, sideDoorCanopy)
-    const entranceMarkers = new THREE.InstancedMesh(new THREE.TorusGeometry(.48, .065, 8, 24), entranceMarkerMaterial, entranceMarkerPositions.length)
-    const entranceTransform = new THREE.Object3D()
-    entranceMarkerPositions.forEach((position, index) => {
-      entranceTransform.position.copy(position)
-      entranceTransform.rotation.set(Math.PI / 2, 0, 0)
-      entranceTransform.updateMatrix()
-      entranceMarkers.setMatrixAt(index, entranceTransform.matrix)
-    })
-    entranceMarkers.instanceMatrix.needsUpdate = true
-    entranceMarkers.castShadow = false
-    entranceMarkers.receiveShadow = false
-    scene.add(entranceMarkers)
+    if (sideDoorPoses.length > 0) {
+      const sideDoorFrame = new THREE.InstancedMesh(new THREE.BoxGeometry(2.7, 4, .42), new THREE.MeshStandardMaterial({ color: '#70a9a9', roughness: .36, metalness: .46, emissive: '#204346', emissiveIntensity: .16 }), sideDoorPoses.length)
+      const sideDoorGlass = new THREE.InstancedMesh(new THREE.BoxGeometry(1.85, 3.1, .24), new THREE.MeshPhysicalMaterial({ color: '#acd1d0', metalness: .3, roughness: .12, transparent: true, opacity: .68, clearcoat: 1, clearcoatRoughness: .07 }), sideDoorPoses.length)
+      const sideDoorCanopy = new THREE.InstancedMesh(new THREE.BoxGeometry(3.1, .2, 1.8), new THREE.MeshStandardMaterial({ color: '#d7b47c', roughness: .68 }), sideDoorPoses.length)
+      const doorTransform = new THREE.Object3D()
+      sideDoorPoses.forEach((pose, index) => {
+        doorTransform.rotation.set(0, pose.rotationY, 0)
+        doorTransform.position.set(pose.x + pose.normalX * .3, 2.05, pose.z + pose.normalZ * .3)
+        doorTransform.updateMatrix(); sideDoorFrame.setMatrixAt(index, doorTransform.matrix)
+        doorTransform.position.set(pose.x + pose.normalX * .58, 1.65, pose.z + pose.normalZ * .58)
+        doorTransform.updateMatrix(); sideDoorGlass.setMatrixAt(index, doorTransform.matrix)
+        doorTransform.position.set(pose.x + pose.normalX * 1.15, 3.68, pose.z + pose.normalZ * 1.15)
+        doorTransform.updateMatrix(); sideDoorCanopy.setMatrixAt(index, doorTransform.matrix)
+      })
+      sideDoorFrame.castShadow = true
+      sideDoorGlass.castShadow = false
+      sideDoorCanopy.castShadow = true
+      scene.add(sideDoorFrame, sideDoorGlass, sideDoorCanopy)
+    }
+    if (entranceMarkerPositions.length > 0) {
+      const entranceMarkers = new THREE.InstancedMesh(new THREE.TorusGeometry(.48, .065, 8, 24), entranceMarkerMaterial, entranceMarkerPositions.length)
+      const entranceTransform = new THREE.Object3D()
+      entranceMarkerPositions.forEach((position, index) => {
+        entranceTransform.position.copy(position)
+        entranceTransform.rotation.set(Math.PI / 2, 0, 0)
+        entranceTransform.updateMatrix()
+        entranceMarkers.setMatrixAt(index, entranceTransform.matrix)
+      })
+      entranceMarkers.instanceMatrix.needsUpdate = true
+      entranceMarkers.castShadow = false
+      entranceMarkers.receiveShadow = false
+      scene.add(entranceMarkers)
+    }
     for (let room = 0; room < 5; room++) interiors.push(addInterior(scene, room))
 
     // Sidewalk foot traffic gives the districts scale and life.
@@ -1232,23 +1567,23 @@ export default function CityScene({ active, paused, objectives, onMission, onHud
     for (let i = 0; i < 12; i++) {
       const axis = i % 2 ? 'x' : 'z'
       const fixed = (Math.floor(i / 2) - 3) * 100 + (i % 3 ? 3.4 : -3.4)
-      const car = makeTrafficCar(['#ba6659', '#487982', '#c4b58e', '#584e66'][i % 4], i % 3)
+      const car = makeTrafficCar(['#59a034', '#34445c', '#ba6659', '#00b4d8'][i % 4], i % 4)
       scene.add(car)
       traffic.push({ object: car, axis, fixed, progress: -420 + i * 73, speed: 6 + (i % 4) * 1.7, limit: 440 })
     }
 
     const parkedSpots = [
-      { x: 6.5, z: -3.5, yaw: Math.PI / 2 },
-      { x: -7, z: -96, yaw: Math.PI / 2 },
-      { x: 107, z: 96, yaw: Math.PI / 2 },
-      { x: 193, z: -104, yaw: Math.PI / 2 },
-      { x: -193, z: 204, yaw: Math.PI / 2 },
-      { x: 307, z: -196, yaw: Math.PI / 2 },
-      { x: -307, z: 296, yaw: Math.PI / 2 },
-      { x: 407, z: 104, yaw: Math.PI / 2 },
+      { x: 6.5, z: -3.5, yaw: Math.PI / 2, variant: 3, color: '#44d62c' }, // Player spawn hypercar: Dewbauchee Vagner in Pearlescent Racing Lime!
+      { x: -7, z: -96, yaw: Math.PI / 2, variant: 0, color: '#246a73' },
+      { x: 107, z: 96, yaw: Math.PI / 2, variant: 3, color: '#e63946' }, // Vagner in Metallic Crimson
+      { x: 193, z: -104, yaw: Math.PI / 2, variant: 1, color: '#34445c' },
+      { x: -193, z: 204, yaw: Math.PI / 2, variant: 2, color: '#e7e1d4' },
+      { x: 307, z: -196, yaw: Math.PI / 2, variant: 3, color: '#00b4d8' }, // Vagner in Electric Cyan
+      { x: -307, z: 296, yaw: Math.PI / 2, variant: 0, color: '#465e4d' },
+      { x: 407, z: 104, yaw: Math.PI / 2, variant: 3, color: '#f77f00' }, // Vagner in Papaya Orange
     ]
-    parkedSpots.forEach((spot, index) => {
-      const car = makeTrafficCar(['#bd4237', '#246a73', '#e3c17a', '#34445c', '#e7e1d4', '#71514d', '#465e4d', '#aa653c'][index], index % 3)
+    parkedSpots.forEach((spot) => {
+      const car = makeTrafficCar(spot.color, spot.variant)
       car.position.set(spot.x, 0, spot.z)
       car.rotation.y = spot.yaw
       car.userData.driveable = true

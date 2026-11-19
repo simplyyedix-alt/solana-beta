@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "vite --port 5175",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "build:web": "npm run build",
@@ -22,6 +22,7 @@
     "@capacitor/local-notifications": "^6.0.0",
     "@capacitor/push-notifications": "^6.0.0",
     "@supabase/supabase-js": "^2.0.0",
+    "3d-tiles-renderer": "^0.5.4",
     "axios": "^1.6.0",
     "clsx": "^2.0.0",
     "date-fns": "^2.30.0",
